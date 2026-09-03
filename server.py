@@ -1,31 +1,29 @@
-import os
-import json
-import uuid
-import logging
 import asyncio
+import json
+import logging
+import os
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, APIRouter, HTTPException, UploadFile, File
-from fastapi.responses import StreamingResponse, Response
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
+from emergentintegrations.llm.chat import (LlmChat, StreamDone, TextDelta,
+                                           UserMessage)
+from emergentintegrations.llm.openai import (OpenAISpeechToText,
+                                             OpenAITextToSpeech)
+from fastapi import APIRouter, FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import Response, StreamingResponse
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.middleware.cors import CORSMiddleware
 from tavily import TavilyClient
-from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
-from emergentintegrations.llm.openai import OpenAITextToSpeech, OpenAISpeechToText
 
-from research import (
-    deep_research,
-    generate_insights_from_bundle,
-    plan_rails,
-    ResearchBundle,
-)
-from newsroom import run_newsroom as _run_newsroom, PERSONAS as _NR_PERSONAS
-
+from newsroom import PERSONAS as _NR_PERSONAS
+from newsroom import run_newsroom as _run_newsroom
+from research import (ResearchBundle, deep_research,
+                      generate_insights_from_bundle, plan_rails)
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -59,6 +57,7 @@ LLM_MODEL = "gpt-5.4"
 
 
 # ============ Models ============
+
 
 class Insight(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -146,6 +145,7 @@ class RewriteRequest(BaseModel):
 
 class SourceInsight(BaseModel):
     """Compact representation of an insight used as context for a branch call."""
+
     id: Optional[str] = None
     topic: str = ""
     headline: str = ""
@@ -188,10 +188,13 @@ class AnswerRequest(BaseModel):
 class CommandRequest(BaseModel):
     """Unified command endpoint — accepts either voice transcript OR chat message. Backend
     classifies intent and streams back an appropriate response type."""
+
     session_id: str
     topic: str
     current_insight: SourceInsight  # the insight the user was viewing
-    insights: List[SourceInsight] = Field(default_factory=list)  # full current visible deck
+    insights: List[SourceInsight] = Field(
+        default_factory=list
+    )  # full current visible deck
     message: str  # user's request (from mic or chat)
     channel: str = "text"  # "voice" | "text"
     history: List[dict] = Field(default_factory=list)
@@ -242,6 +245,7 @@ def is_vague(topic: str) -> bool:
 
 async def tavily_search(topic: str) -> tuple:
     """[Legacy] Kept for regenerate. Simple advanced search returning (results, answer)."""
+
     def _search():
         return tavily.search(
             query=topic,
@@ -309,7 +313,12 @@ async def build_behavior_context(session_id: str) -> str:
     return "\n".join(lines)
 
 
-def to_insights(items: List[dict], topic: str, sources: List[dict], preserve_id: Optional[str] = None) -> List[Insight]:
+def to_insights(
+    items: List[dict],
+    topic: str,
+    sources: List[dict],
+    preserve_id: Optional[str] = None,
+) -> List[Insight]:
     """Map LLM output items to Insight model, resolving source_index → source_url/title.
 
     If an item already carries pre-resolved `_source_url` / `_source_title`
@@ -343,6 +352,7 @@ def to_insights(items: List[dict], topic: str, sources: List[dict], preserve_id:
 
 
 # ============ Routes ============
+
 
 @api_router.get("/")
 async def root():
@@ -425,7 +435,9 @@ async def save_insight(req: SaveInsightRequest):
 
 @api_router.get("/insights/saved", response_model=List[SavedInsight])
 async def list_saved():
-    docs = await db.saved_insights.find({}, {"_id": 0}).sort("saved_at", -1).to_list(500)
+    docs = (
+        await db.saved_insights.find({}, {"_id": 0}).sort("saved_at", -1).to_list(500)
+    )
     return [SavedInsight(**d) for d in docs]
 
 
@@ -544,7 +556,9 @@ async def stt(file: UploadFile = File(...)):
                 file=f, model="whisper-1", response_format="text"
             )
         # result may be a string (text format) or object with .text
-        text = result if isinstance(result, str) else getattr(result, "text", str(result))
+        text = (
+            result if isinstance(result, str) else getattr(result, "text", str(result))
+        )
         return {"text": (text or "").strip()}
     except Exception as e:
         logging.exception("STT failed")
@@ -581,7 +595,9 @@ async def regenerate_insight(req: RegenerateRequest):
     if not items:
         raise HTTPException(status_code=500, detail="Could not regenerate")
 
-    insights = to_insights(items[:1], req.topic, bundle.sources, preserve_id=req.insight_id)
+    insights = to_insights(
+        items[:1], req.topic, bundle.sources, preserve_id=req.insight_id
+    )
     return insights[0]
 
 
@@ -675,7 +691,8 @@ async def get_directions(req: DirectionsRequest):
         )
     elif req.interests:
         interest_line = (
-            "\nUSER INTEREST FOCUS: " + req.interests[0]
+            "\nUSER INTEREST FOCUS: "
+            + req.interests[0]
             + "\nEvery direction must sit inside this single interest lane."
         )
     if req.is_news:
@@ -693,7 +710,11 @@ async def get_directions(req: DirectionsRequest):
 
     try:
         text = await chat.send_message(
-            UserMessage(text=DIRECTIONS_USER_TEMPLATE.format(topic=topic, interest_line=interest_line))
+            UserMessage(
+                text=DIRECTIONS_USER_TEMPLATE.format(
+                    topic=topic, interest_line=interest_line
+                )
+            )
         )
     except Exception:
         logging.exception("directions LLM failed")
@@ -723,6 +744,7 @@ async def get_directions(req: DirectionsRequest):
 
 
 # ============ SSE Streaming (fixes 60s edge timeouts) ============
+
 
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
@@ -772,6 +794,7 @@ async def _stream_generate(
             meta = dict(ev.get("meta") or {})
             meta["rail"] = rail_name
             await q.put({**ev, "meta": meta})
+
         return _cb
 
     def _combined_steer_for_rail(rail: Optional[dict]) -> str:
@@ -856,7 +879,9 @@ async def _stream_generate(
             logging.warning("rail %s: 0 sources — dropping rail", rail["name"])
             return rail, bundle, []
 
-        behavior_ctx = ""  # multi-rail is only used on first generation (no history yet)
+        behavior_ctx = (
+            ""  # multi-rail is only used on first generation (no history yet)
+        )
         try:
             items = await generate_insights_from_bundle(
                 bundle=bundle,
@@ -885,22 +910,27 @@ async def _stream_generate(
             if use_multirail:
                 await q.put({"phase": "planning", "message": "Reading your interests"})
                 rails = await plan_rails(
-                    interests=interests or [], is_news=is_news, llm_key=EMERGENT_LLM_KEY,
+                    interests=interests or [],
+                    is_news=is_news,
+                    llm_key=EMERGENT_LLM_KEY,
                 )
                 if not rails:
                     # Fall back to single-rail if the planner failed
                     use_mr = False
                 else:
                     use_mr = True
-                    await q.put({
-                        "phase": "rails_planned",
-                        "message": f"Curated {len(rails)} persona lens{'es' if len(rails) != 1 else ''}",
-                        "meta": {
-                            "rails": [
-                                {"name": r["name"], "persona": r["persona"]} for r in rails
-                            ]
-                        },
-                    })
+                    await q.put(
+                        {
+                            "phase": "rails_planned",
+                            "message": f"Curated {len(rails)} persona lens{'es' if len(rails) != 1 else ''}",
+                            "meta": {
+                                "rails": [
+                                    {"name": r["name"], "persona": r["persona"]}
+                                    for r in rails
+                                ]
+                            },
+                        }
+                    )
 
                 if use_mr:
                     # Distribute the 12 cards across rails. Give leftovers to the first rails.
@@ -916,7 +946,9 @@ async def _stream_generate(
                     target_counts = [min(12, c + 3) for c in per_rail]
 
                     # Run rails in parallel
-                    tasks = [run_single_rail(r, tc) for r, tc in zip(rails, target_counts)]
+                    tasks = [
+                        run_single_rail(r, tc) for r, tc in zip(rails, target_counts)
+                    ]
                     results = await asyncio.gather(*tasks, return_exceptions=False)
 
                     # Round-robin interleave (Card 1 = Rail A, Card 2 = Rail B, …).
@@ -980,31 +1012,49 @@ async def _stream_generate(
                             # hitting its monthly budget.
                         try:
                             # Re-run one cheap LLM ping to distinguish key-out-of-budget from Tavily
-                            from emergentintegrations.llm.chat import LlmChat as _LC, UserMessage as _UM
-                            _c = _LC(api_key=EMERGENT_LLM_KEY, session_id="probe", system_message="Reply with 'ok'").with_model("openai", "gpt-5.4-mini")
+                            from emergentintegrations.llm.chat import \
+                                LlmChat as _LC
+                            from emergentintegrations.llm.chat import \
+                                UserMessage as _UM
+
+                            _c = _LC(
+                                api_key=EMERGENT_LLM_KEY,
+                                session_id="probe",
+                                system_message="Reply with 'ok'",
+                            ).with_model("openai", "gpt-5.4-mini")
                             await _c.send_message(_UM(text="ping"))
                         except Exception as e:
-                            if "budget" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
+                            if (
+                                "budget" in str(e).lower()
+                                or "429" in str(e)
+                                or "quota" in str(e).lower()
+                            ):
                                 budget_hit = True
 
                         if tavily_quota_hit:
-                            await q.put({
-                                "phase": "error",
-                                "message": "Web-search quota exhausted (Tavily). Please upgrade your Tavily plan or contact support@tavily.com to continue.",
-                                "meta": {"reason": "tavily_quota_exceeded"},
-                            })
+                            await q.put(
+                                {
+                                    "phase": "error",
+                                    "message": "Web-search quota exhausted (Tavily). Please upgrade your Tavily plan or contact support@tavily.com to continue.",
+                                    "meta": {"reason": "tavily_quota_exceeded"},
+                                }
+                            )
                         elif budget_hit:
-                            await q.put({
-                                "phase": "error",
-                                "message": "AI credits are exhausted. Please top up your Emergent LLM key (Profile → Universal Key → Add Balance).",
-                                "meta": {"reason": "llm_budget_exceeded"},
-                            })
+                            await q.put(
+                                {
+                                    "phase": "error",
+                                    "message": "AI credits are exhausted. Please top up your Emergent LLM key (Profile → Universal Key → Add Balance).",
+                                    "meta": {"reason": "llm_budget_exceeded"},
+                                }
+                            )
                         else:
-                            await q.put({
-                                "phase": "error",
-                                "message": "Couldn't build a feed for these interests right now. Please try again.",
-                                "meta": {"reason": "all_rails_empty"},
-                            })
+                            await q.put(
+                                {
+                                    "phase": "error",
+                                    "message": "Couldn't build a feed for these interests right now. Please try again.",
+                                    "meta": {"reason": "all_rails_empty"},
+                                }
+                            )
                         return
 
                     # Merge sources from all rails (dedupe by URL, preserve order)
@@ -1028,7 +1078,8 @@ async def _stream_generate(
                             "interests": interests,
                             "is_news": is_news,
                             "rails": [
-                                {"name": r["name"], "persona": r["persona"]} for r in rails
+                                {"name": r["name"], "persona": r["persona"]}
+                                for r in rails
                             ],
                             "angles": [],
                             "sources_used": [s.get("url") for s in merged_sources[:15]],
@@ -1067,7 +1118,13 @@ async def _stream_generate(
                     "deep_research returned 0 sources for %r — retrying once",
                     research_topic,
                 )
-                await q.put({"phase": "searching", "message": "Retrying web search", "meta": {"retry": 1}})
+                await q.put(
+                    {
+                        "phase": "searching",
+                        "message": "Retrying web search",
+                        "meta": {"retry": 1},
+                    }
+                )
                 await asyncio.sleep(1.5)
                 bundle = await deep_research(
                     topic=research_topic,
@@ -1087,19 +1144,25 @@ async def _stream_generate(
                     research_topic,
                 )
                 if getattr(bundle, "quota_exceeded", False):
-                    await q.put({
-                        "phase": "error",
-                        "message": "Web-search quota exhausted (Tavily). Please upgrade your Tavily plan or contact support@tavily.com to continue.",
-                        "meta": {"reason": "tavily_quota_exceeded"},
-                    })
+                    await q.put(
+                        {
+                            "phase": "error",
+                            "message": "Web-search quota exhausted (Tavily). Please upgrade your Tavily plan or contact support@tavily.com to continue.",
+                            "meta": {"reason": "tavily_quota_exceeded"},
+                        }
+                    )
                 else:
-                    await q.put({
-                        "phase": "error",
-                        "message": "Web search is temporarily unavailable. Please try again in a moment.",
-                        "meta": {"reason": "no_sources"},
-                    })
+                    await q.put(
+                        {
+                            "phase": "error",
+                            "message": "Web search is temporarily unavailable. Please try again in a moment.",
+                            "meta": {"reason": "no_sources"},
+                        }
+                    )
                 return
-            await q.put({"phase": "synthesizing", "message": "Synthesizing 12 insights"})
+            await q.put(
+                {"phase": "synthesizing", "message": "Synthesizing 12 insights"}
+            )
             behavior_ctx = await build_behavior_context(sid) if session_id else ""
 
             combined_steer = steer or ""
@@ -1189,8 +1252,15 @@ class GenerateStreamRequest(BaseModel):
 async def generate_stream(req: GenerateStreamRequest):
     topic = req.topic.strip()
     if is_vague(topic):
+
         async def err():
-            yield _sse({"phase": "error", "message": "Topic is too vague. Try something more specific — e.g. 'how Amazon became successful'."})
+            yield _sse(
+                {
+                    "phase": "error",
+                    "message": "Topic is too vague. Try something more specific — e.g. 'how Amazon became successful'.",
+                }
+            )
+
         return StreamingResponse(
             err(),
             media_type="text/event-stream",
@@ -1198,7 +1268,12 @@ async def generate_stream(req: GenerateStreamRequest):
         )
 
     return StreamingResponse(
-        _stream_generate(topic=topic, direction=(req.direction or None), interests=(req.interests or None), is_news=req.is_news),
+        _stream_generate(
+            topic=topic,
+            direction=(req.direction or None),
+            interests=(req.interests or None),
+            is_news=req.is_news,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1262,7 +1337,9 @@ async def _classify_mic_intent(transcript: str, insight_headline: str) -> str:
 - "chat": a conversational question or clarification that just wants an ANSWER (no card changes) — e.g. "what does NPCI mean", "explain this to me", "why is that surprising".
 
 Return strict JSON: {"mode": "rewrite" | "steer" | "transform" | "chat"}. No prose."""
-    user = f'CURRENT INSIGHT HEADLINE: "{insight_headline}"\n\nUSER SAID: "{transcript}"'
+    user = (
+        f'CURRENT INSIGHT HEADLINE: "{insight_headline}"\n\nUSER SAID: "{transcript}"'
+    )
 
     chat = LlmChat(
         api_key=EMERGENT_LLM_KEY,
@@ -1282,9 +1359,40 @@ Return strict JSON: {"mode": "rewrite" | "steer" | "transform" | "chat"}. No pro
     except Exception:
         # Heuristic fallback
         t = transcript.lower()
-        transform_words = ("all the cards", "every card", "all cards", "each insight", "arrange", "chronological", "bullet points", "simple words", "simpler language", "analogies", "use only", "only use", "add example", "add examples", "change all")
-        steer_words = ("focus on", "only show", "next topic", "different topic", "show me", "instead", "recent news")
-        rewrite_words = ("this insight", "this one", "explain this", "deeper on this", "clarify this", "elaborate this")
+        transform_words = (
+            "all the cards",
+            "every card",
+            "all cards",
+            "each insight",
+            "arrange",
+            "chronological",
+            "bullet points",
+            "simple words",
+            "simpler language",
+            "analogies",
+            "use only",
+            "only use",
+            "add example",
+            "add examples",
+            "change all",
+        )
+        steer_words = (
+            "focus on",
+            "only show",
+            "next topic",
+            "different topic",
+            "show me",
+            "instead",
+            "recent news",
+        )
+        rewrite_words = (
+            "this insight",
+            "this one",
+            "explain this",
+            "deeper on this",
+            "clarify this",
+            "elaborate this",
+        )
         if any(w in t for w in transform_words):
             return "transform"
         if any(w in t for w in rewrite_words):
@@ -1350,7 +1458,7 @@ async def rewrite_stream(req: RewriteRequest):
         for line in reversed(collected.splitlines()):
             stripped = line.strip()
             if stripped.upper().startswith("HEADLINE:"):
-                headline = stripped[len("HEADLINE:"):].strip().strip('"')
+                headline = stripped[len("HEADLINE:") :].strip().strip('"')
                 # remove the last "HEADLINE:" line from body
                 text_body = collected.rsplit(line, 1)[0].rstrip()
                 break
@@ -1441,6 +1549,7 @@ async def _stream_branch_generic(
 
             # Compose a per-mode user prompt on top of the shared bundle context
             from research import build_research_context  # local import
+
             base_context = build_research_context(bundle)
 
             if mode == "deeper":
@@ -1490,12 +1599,18 @@ Write EXACTLY 1 insight card that answers this question specifically. The card m
             if previous_headlines:
                 joined = "\n".join(f"- {h}" for h in previous_headlines[-30:])
                 user_prompt += (
-                    "\n\nDO NOT REPEAT or paraphrase these previously shown headlines:\n" + joined
+                    "\n\nDO NOT REPEAT or paraphrase these previously shown headlines:\n"
+                    + joined
                 )
 
-            user_prompt += "\n\nStrict JSON only:\n{\"insights\": [{\"headline\": \"...\", \"text\": \"...\", \"source_index\": 1}, ...]}"
+            user_prompt += '\n\nStrict JSON only:\n{"insights": [{"headline": "...", "text": "...", "source_index": 1}, ...]}'
 
-            await q.put({"phase": "synthesizing", "message": "Writing insight" if count == 1 else "Writing insights"})
+            await q.put(
+                {
+                    "phase": "synthesizing",
+                    "message": "Writing insight" if count == 1 else "Writing insights",
+                }
+            )
 
             session_lbl = f"branch-{mode}-{uuid.uuid4()}"
             chat = LlmChat(
@@ -1680,7 +1795,11 @@ async def _stream_transform(
             # Build compact context of current insights
             lines = []
             for i, ins in enumerate(insights, 1):
-                src_line = f"   SOURCE: {ins.source_title} — {ins.source_url}" if ins.source_url else ""
+                src_line = (
+                    f"   SOURCE: {ins.source_title} — {ins.source_url}"
+                    if ins.source_url
+                    else ""
+                )
                 lines.append(
                     f"[{i}] HEADLINE: {ins.headline}\n    TEXT: {ins.text}\n{src_line}"
                 )
@@ -1718,7 +1837,11 @@ Apply the instruction to ALL {len(insights)} insights. Return strict JSON only, 
                 original = insights[i] if i < len(insights) else None
                 transformed.append(
                     Insight(
-                        id=original.id if original and original.id else str(uuid.uuid4()),
+                        id=(
+                            original.id
+                            if original and original.id
+                            else str(uuid.uuid4())
+                        ),
                         topic=topic,
                         headline=(item.get("headline") or "").strip(),
                         text=(item.get("text") or "").strip(),
@@ -1867,12 +1990,14 @@ async def command_stream(req: CommandRequest):
             )
         )
     else:  # transform
-        gen = wrap(_stream_transform(
-            session_id=req.session_id,
-            topic=req.topic,
-            insights=req.insights or [req.current_insight],
-            instruction=message,
-        ))
+        gen = wrap(
+            _stream_transform(
+                session_id=req.session_id,
+                topic=req.topic,
+                insights=req.insights or [req.current_insight],
+                instruction=message,
+            )
+        )
 
     return StreamingResponse(
         gen,
@@ -1884,9 +2009,7 @@ async def command_stream(req: CommandRequest):
 async def _stream_rewrite_body(req: RewriteRequest):
     """Extracted rewrite generator so it can be reused by /command/stream. Emits delta+done events."""
     source_line = (
-        f"SOURCE: {req.source_title or ''} — {req.source_url}"
-        if req.source_url
-        else ""
+        f"SOURCE: {req.source_title or ''} — {req.source_url}" if req.source_url else ""
     )
     system = REWRITE_SYSTEM.format(
         topic=req.topic,
@@ -1921,7 +2044,7 @@ async def _stream_rewrite_body(req: RewriteRequest):
     for line in reversed(collected.splitlines()):
         stripped = line.strip()
         if stripped.upper().startswith("HEADLINE:"):
-            headline = stripped[len("HEADLINE:"):].strip().strip('"')
+            headline = stripped[len("HEADLINE:") :].strip().strip('"')
             text_body = collected.rsplit(line, 1)[0].rstrip()
             break
 
@@ -1940,16 +2063,39 @@ async def _stream_rewrite_body(req: RewriteRequest):
 # ============ Interest Onboarding (Spotify-style layered chips) ============
 
 SEED_INTERESTS = [
-    "AI", "Finance", "Business", "Communism", "Socialism", "Capitalism",
-    "Governance", "Celebrity Gossip", "Music", "Sports", "Health", "Science",
-    "Philosophy", "Technology", "History", "Design", "Psychology", "Space",
-    "Climate", "Startups", "Art", "Literature", "Gaming", "Fitness",
-    "Cooking", "Travel", "Cinema", "Photography",
+    "AI",
+    "Finance",
+    "Business",
+    "Communism",
+    "Socialism",
+    "Capitalism",
+    "Governance",
+    "Celebrity Gossip",
+    "Music",
+    "Sports",
+    "Health",
+    "Science",
+    "Philosophy",
+    "Technology",
+    "History",
+    "Design",
+    "Psychology",
+    "Space",
+    "Climate",
+    "Startups",
+    "Art",
+    "Literature",
+    "Gaming",
+    "Fitness",
+    "Cooking",
+    "Travel",
+    "Cinema",
+    "Photography",
 ]
 
 # Cheap + fast LLM for chip expansion (independent of the main insight LLM)
-INTEREST_LLM_PROVIDER = "gemini"
-INTEREST_LLM_MODEL = "gemini-3-flash-preview"
+INTEREST_LLM_PROVIDER = "openai"
+INTEREST_LLM_MODEL = "gpt-5.4-nano"
 
 
 class InterestExpandRequest(BaseModel):
@@ -1976,17 +2122,18 @@ class UserInterestsResponse(BaseModel):
 
 def _extract_json_array(text: str):
     import re as _re
+
     fence = _re.search(r"```(?:json)?\s*(\[.*?\])\s*```", text, _re.DOTALL)
     if fence:
         try:
             return json.loads(fence.group(1))
         except Exception:
             pass
-    start = text.find('[')
-    end = text.rfind(']')
+    start = text.find("[")
+    end = text.rfind("]")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start : end + 1])
         except Exception:
             pass
     return None
@@ -2044,16 +2191,20 @@ async def expand_interest(req: InterestExpandRequest):
 
     await db.interest_cache.update_one(
         {"key": key},
-        {"$set": {
-            "key": key,
-            "interest": req.interest,
-            "parent_chain": req.parent_chain,
-            "sub_interests": subs,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }},
+        {
+            "$set": {
+                "key": key,
+                "interest": req.interest,
+                "parent_chain": req.parent_chain,
+                "sub_interests": subs,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
         upsert=True,
     )
-    return InterestExpandResponse(interest=req.interest, sub_interests=subs, from_cache=False)
+    return InterestExpandResponse(
+        interest=req.interest, sub_interests=subs, from_cache=False
+    )
 
 
 @api_router.get("/interests/me", response_model=UserInterestsResponse)
@@ -2080,14 +2231,18 @@ async def save_my_interests(req: SaveInterestsRequest):
     updated_at = datetime.now(timezone.utc).isoformat()
     await db.user_interests.update_one(
         {"device_id": req.device_id},
-        {"$set": {
-            "device_id": req.device_id,
-            "interests": cleaned,
-            "updated_at": updated_at,
-        }},
+        {
+            "$set": {
+                "device_id": req.device_id,
+                "interests": cleaned,
+                "updated_at": updated_at,
+            }
+        },
         upsert=True,
     )
-    return UserInterestsResponse(device_id=req.device_id, interests=cleaned, updated_at=updated_at)
+    return UserInterestsResponse(
+        device_id=req.device_id, interests=cleaned, updated_at=updated_at
+    )
 
 
 @api_router.delete("/interests/me")
@@ -2118,7 +2273,9 @@ NEWS_SEED_INTERESTS = [
 ]
 
 
-async def _stream_expand_chips(interest: str, parent_chain: List[str], mode: str = "interests"):
+async def _stream_expand_chips(
+    interest: str, parent_chain: List[str], mode: str = "interests"
+):
     """Generator: streams sub-chip labels one by one as SSE events."""
     q: asyncio.Queue = asyncio.Queue()
     key = f"{mode}:" + " > ".join([*parent_chain, interest]).lower().strip()
@@ -2131,12 +2288,20 @@ async def _stream_expand_chips(interest: str, parent_chain: List[str], mode: str
                 await q.put({"phase": "start", "from_cache": True})
                 for chip in cached["sub_interests"]:
                     await q.put({"phase": "chip", "label": chip})
-                await q.put({"phase": "done", "sub_interests": cached["sub_interests"], "from_cache": True})
+                await q.put(
+                    {
+                        "phase": "done",
+                        "sub_interests": cached["sub_interests"],
+                        "from_cache": True,
+                    }
+                )
                 return
 
             parent_context = ""
             if parent_chain:
-                parent_context = f" The user drilled down from: {' → '.join(parent_chain)}."
+                parent_context = (
+                    f" The user drilled down from: {' → '.join(parent_chain)}."
+                )
 
             if mode == "news":
                 system = (
@@ -2149,7 +2314,7 @@ async def _stream_expand_chips(interest: str, parent_chain: List[str], mode: str
                 )
                 user_text = (
                     f'News category: "{interest}".{parent_context}\n'
-                    'Return JSON array of 8 short, current, SPECIFIC news storylines.'
+                    "Return JSON array of 8 short, current, SPECIFIC news storylines."
                 )
             else:
                 system = (
@@ -2160,7 +2325,7 @@ async def _stream_expand_chips(interest: str, parent_chain: List[str], mode: str
                 )
                 user_text = (
                     f'Topic: "{interest}".{parent_context}\n'
-                    'Return JSON array of 8 short sub-topics.'
+                    "Return JSON array of 8 short sub-topics."
                 )
 
             await q.put({"phase": "start", "from_cache": False})
@@ -2173,11 +2338,15 @@ async def _stream_expand_chips(interest: str, parent_chain: List[str], mode: str
             raw = await chat.send_message(UserMessage(text=user_text))
 
             subs = _extract_json_array(raw if isinstance(raw, str) else str(raw)) or []
-            subs = [str(s).strip() for s in subs if isinstance(s, str) and str(s).strip()]
+            subs = [
+                str(s).strip() for s in subs if isinstance(s, str) and str(s).strip()
+            ]
             subs = [s for s in subs if 1 <= len(s) <= 80][:8]
 
             if not subs:
-                await q.put({"phase": "error", "message": "Could not parse sub-interests"})
+                await q.put(
+                    {"phase": "error", "message": "Could not parse sub-interests"}
+                )
                 return
 
             # Stream chip-by-chip with tiny gaps so the UI reveals them progressively
@@ -2188,14 +2357,16 @@ async def _stream_expand_chips(interest: str, parent_chain: List[str], mode: str
             # Cache
             await db.interest_cache.update_one(
                 {"key": key},
-                {"$set": {
-                    "key": key,
-                    "interest": interest,
-                    "parent_chain": parent_chain,
-                    "sub_interests": subs,
-                    "mode": mode,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }},
+                {
+                    "$set": {
+                        "key": key,
+                        "interest": interest,
+                        "parent_chain": parent_chain,
+                        "sub_interests": subs,
+                        "mode": mode,
+                        "updated_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                },
                 upsert=True,
             )
 
@@ -2231,7 +2402,11 @@ class InterestExpandStreamRequest(BaseModel):
 @api_router.post("/interests/expand/stream")
 async def expand_interest_stream(req: InterestExpandStreamRequest):
     return StreamingResponse(
-        _stream_expand_chips(req.interest, req.parent_chain, req.mode if req.mode in ("interests", "news") else "interests"),
+        _stream_expand_chips(
+            req.interest,
+            req.parent_chain,
+            req.mode if req.mode in ("interests", "news") else "interests",
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -2247,6 +2422,7 @@ async def get_news_seed_interests():
 # across politics, Bollywood, cricket, tech, and social-media drama, then
 # LLM-synthesises 10 wow-inducing insight cards each tagged with its own
 # persona so the swipe deck alternates voices (Russian-roulette feel).
+
 
 class HotCard(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -2413,6 +2589,7 @@ _HOT_CACHE_TTL_SEC = 20 * 60
 
 async def _tavily_news_light(query: str) -> List[dict]:
     """Lightweight news search — 5 results, last 7 days, topic=news."""
+
     def _do():
         try:
             return tavily.search(
@@ -2426,11 +2603,13 @@ async def _tavily_news_light(query: str) -> List[dict]:
             ).get("results", [])
         except Exception:
             return []
+
     return await asyncio.to_thread(_do)
 
 
 async def _tavily_general_light(query: str) -> List[dict]:
     """Fallback general web search when news search is empty."""
+
     def _do():
         try:
             return tavily.search(
@@ -2443,6 +2622,7 @@ async def _tavily_general_light(query: str) -> List[dict]:
             ).get("results", [])
         except Exception:
             return []
+
     return await asyncio.to_thread(_do)
 
 
@@ -2501,7 +2681,9 @@ async def _synth_hot_card_from_sources(bp: dict, results: List[dict]) -> Optiona
     ).with_model(LLM_PROVIDER, LLM_MODEL)
 
     try:
-        raw = await chat.send_message(UserMessage(text=ctx + "\n\nReturn exactly one card as strict JSON."))
+        raw = await chat.send_message(
+            UserMessage(text=ctx + "\n\nReturn exactly one card as strict JSON.")
+        )
     except Exception:
         logging.exception("hot card LLM failed for %s", bp["category"])
         return None
@@ -2558,8 +2740,8 @@ async def _synth_hot_card_llm_only(bp: dict) -> Optional[dict]:
         + f"\nVOICE / TONE: {bp['voice_hint']}"
         + f"\nANGLES TO PRIORITISE: {bp['angle_hint']}"
         + "\n\nNOTE: No live sources available — draw from the persona's core, well-known "
-          "reference knowledge (established facts, publicly known data). Do NOT invent "
-          "very recent (this-week) news. Prefer an evergreen non-obvious mechanism."
+        "reference knowledge (established facts, publicly known data). Do NOT invent "
+        "very recent (this-week) news. Prefer an evergreen non-obvious mechanism."
     )
     user = f"CATEGORY: {bp['category']}\nPRODUCE ONE INSIGHT CARD (strict JSON only) that a young urban Indian would find non-obvious. Use only widely-known references (no fabricated numbers)."
 
@@ -2637,17 +2819,22 @@ async def hot_topics():
     """
     # ── 1. Try newsroom cache first ──
     cutoff = datetime.now(timezone.utc).timestamp() - 30 * 3600
-    nr_docs = await db.hot_now_cards.find(
-        {}, {"_id": 0}
-    ).sort("published_at", -1).to_list(50)
+    nr_docs = (
+        await db.hot_now_cards.find({}, {"_id": 0}).sort("published_at", -1).to_list(50)
+    )
     fresh_nr = [
-        d for d in nr_docs
+        d
+        for d in nr_docs
         if datetime.fromisoformat(d["published_at"]).timestamp() >= cutoff
     ]
     if fresh_nr:
         # Keep the latest run only (dedupe by run_id: prefer most recent run_stamp)
         latest_run_stamp = max(d.get("run_stamp", d["published_at"]) for d in fresh_nr)
-        latest = [d for d in fresh_nr if d.get("run_stamp", d["published_at"]) == latest_run_stamp]
+        latest = [
+            d
+            for d in fresh_nr
+            if d.get("run_stamp", d["published_at"]) == latest_run_stamp
+        ]
         cards_out = []
         persona_to_category = {
             "gossip_girl": "Culture",
@@ -2664,18 +2851,23 @@ async def hot_topics():
                 continue
             first = doc["cards"][0]
             src_url = first.get("source_url") or (doc.get("sources") or [None])[0]
-            cards_out.append({
-                "id": doc.get("id") or str(uuid.uuid4()),
-                "topic": doc["topic"],
-                "headline": first.get("headline", ""),
-                "text": first.get("text", ""),
-                "category": persona_to_category.get(doc.get("persona_key", ""), "Insight"),
-                "rail": doc.get("persona_label", "Editor"),
-                "interest": doc.get("persona_label", "Editor"),
-                "source_url": src_url,
-                "source_title": first.get("source_title") or doc.get("angle", {}).get("title", ""),
-                "blueprint_index": i,
-            })
+            cards_out.append(
+                {
+                    "id": doc.get("id") or str(uuid.uuid4()),
+                    "topic": doc["topic"],
+                    "headline": first.get("headline", ""),
+                    "text": first.get("text", ""),
+                    "category": persona_to_category.get(
+                        doc.get("persona_key", ""), "Insight"
+                    ),
+                    "rail": doc.get("persona_label", "Editor"),
+                    "interest": doc.get("persona_label", "Editor"),
+                    "source_url": src_url,
+                    "source_title": first.get("source_title")
+                    or doc.get("angle", {}).get("title", ""),
+                    "blueprint_index": i,
+                }
+            )
         if cards_out:
             return HotResponse(
                 cards=[HotCard(**c) for c in cards_out],
@@ -2684,10 +2876,14 @@ async def hot_topics():
 
     # ── 2. Legacy fan-out fallback ──
     import time
+
     now = time.time()
     cached = _HOT_CACHE.get("cards")
     if cached and (now - _HOT_CACHE.get("ts", 0)) < _HOT_CACHE_TTL_SEC:
-        return HotResponse(cards=[HotCard(**c) for c in cached], generated_at=_HOT_CACHE.get("generated_at", ""))
+        return HotResponse(
+            cards=[HotCard(**c) for c in cached],
+            generated_at=_HOT_CACHE.get("generated_at", ""),
+        )
 
     # Fan out ALL 12 blueprints in parallel
     results = await asyncio.gather(
@@ -2732,27 +2928,43 @@ async def hot_topics_stream(fresh: int = 0):
         # keeps the buffer refreshed. ──
         try:
             cutoff = datetime.now(timezone.utc).timestamp() - 30 * 3600
-            nr_docs = await db.hot_now_cards.find(
-                {}, {"_id": 0}
-            ).sort("published_at", -1).to_list(80)
+            nr_docs = (
+                await db.hot_now_cards.find({}, {"_id": 0})
+                .sort("published_at", -1)
+                .to_list(80)
+            )
             fresh_nr = [
-                d for d in nr_docs
+                d
+                for d in nr_docs
                 if datetime.fromisoformat(d["published_at"]).timestamp() >= cutoff
             ]
             if fresh_nr:
-                latest_stamp = max(d.get("run_stamp", d["published_at"]) for d in fresh_nr)
-                latest = [d for d in fresh_nr if d.get("run_stamp", d["published_at"]) == latest_stamp]
+                latest_stamp = max(
+                    d.get("run_stamp", d["published_at"]) for d in fresh_nr
+                )
+                latest = [
+                    d
+                    for d in fresh_nr
+                    if d.get("run_stamp", d["published_at"]) == latest_stamp
+                ]
                 # On regenerate, rotate: skip the first N and cycle through
                 if fresh and len(latest) > 0:
                     import random as _random
+
                     _random.shuffle(latest)
                 persona_to_category = {
-                    "gossip_girl": "Culture", "startup_founder": "Startups",
-                    "seed_investor": "Business", "policy_wonk": "Geopolitics",
-                    "developer": "Tech", "contrarian_economist": "Markets",
-                    "culture_analyst": "Culture", "india_insider": "India",
+                    "gossip_girl": "Culture",
+                    "startup_founder": "Startups",
+                    "seed_investor": "Business",
+                    "policy_wonk": "Geopolitics",
+                    "developer": "Tech",
+                    "contrarian_economist": "Markets",
+                    "culture_analyst": "Culture",
+                    "india_insider": "India",
                 }
-                yield _sse({"phase": "meta", "source": "newsroom", "run_stamp": latest_stamp})
+                yield _sse(
+                    {"phase": "meta", "source": "newsroom", "run_stamp": latest_stamp}
+                )
                 for i, doc in enumerate(latest[:12]):
                     if not doc.get("cards"):
                         continue
@@ -2762,15 +2974,25 @@ async def hot_topics_stream(fresh: int = 0):
                         "topic": doc["topic"],
                         "headline": first.get("headline", ""),
                         "text": first.get("text", ""),
-                        "category": persona_to_category.get(doc.get("persona_key", ""), "Insight"),
+                        "category": persona_to_category.get(
+                            doc.get("persona_key", ""), "Insight"
+                        ),
                         "rail": doc.get("persona_label", "Editor"),
                         "interest": doc.get("persona_label", "Editor"),
-                        "source_url": first.get("source_url") or (doc.get("sources") or [None])[0],
-                        "source_title": first.get("source_title") or doc.get("angle", {}).get("title", ""),
+                        "source_url": first.get("source_url")
+                        or (doc.get("sources") or [None])[0],
+                        "source_title": first.get("source_title")
+                        or doc.get("angle", {}).get("title", ""),
                         "blueprint_index": i,
                     }
                     yield _sse({"phase": "card", "card": card})
-                yield _sse({"phase": "done", "generated_at": latest_stamp, "source": "newsroom"})
+                yield _sse(
+                    {
+                        "phase": "done",
+                        "generated_at": latest_stamp,
+                        "source": "newsroom",
+                    }
+                )
                 # Fire a background newsroom run on regenerate so tomorrow's
                 # deck is fresh — user never waits for it.
                 if fresh and not _NEWSROOM_STATE.get("running"):
@@ -2790,7 +3012,9 @@ async def hot_topics_stream(fresh: int = 0):
         ):
             for c in cached:
                 yield _sse({"phase": "card", "card": c})
-            yield _sse({"phase": "done", "generated_at": _HOT_CACHE.get("generated_at", "")})
+            yield _sse(
+                {"phase": "done", "generated_at": _HOT_CACHE.get("generated_at", "")}
+            )
             return
 
         # Otherwise fan out blueprints and stream results as they finish
@@ -2826,7 +3050,12 @@ async def hot_topics_stream(fresh: int = 0):
                 _HOT_CACHE["generated_at"] = generated_at
                 yield _sse({"phase": "done", "generated_at": generated_at})
             else:
-                yield _sse({"phase": "error", "message": "Hot feed temporarily unavailable — please retry."})
+                yield _sse(
+                    {
+                        "phase": "error",
+                        "message": "Hot feed temporarily unavailable — please retry.",
+                    }
+                )
         finally:
             for t in tasks:
                 if not t.done():
@@ -2844,6 +3073,7 @@ async def hot_topics_stream(fresh: int = 0):
 # Newsroom — admin endpoints + daily scheduler
 # ============================================================================
 
+
 class NewsroomRunResponse(BaseModel):
     ok: bool
     signals: Optional[int] = None
@@ -2853,7 +3083,12 @@ class NewsroomRunResponse(BaseModel):
     reason: Optional[str] = None
 
 
-_NEWSROOM_STATE: dict = {"running": False, "last_result": None, "last_started": None, "last_finished": None}
+_NEWSROOM_STATE: dict = {
+    "running": False,
+    "last_result": None,
+    "last_started": None,
+    "last_finished": None,
+}
 
 
 async def _do_newsroom_run() -> dict:
@@ -2862,7 +3097,9 @@ async def _do_newsroom_run() -> dict:
     _NEWSROOM_STATE["running"] = True
     _NEWSROOM_STATE["last_started"] = datetime.now(timezone.utc).isoformat()
     try:
-        result = await _run_newsroom(tavily=tavily, db=db, llm_key=EMERGENT_LLM_KEY, keep_n=15)
+        result = await _run_newsroom(
+            tavily=tavily, db=db, llm_key=EMERGENT_LLM_KEY, keep_n=15
+        )
     except Exception as e:
         logging.exception("newsroom run failed")
         result = {"ok": False, "reason": str(e)}
@@ -2888,9 +3125,7 @@ async def admin_newsroom_run(background: bool = True):
 @api_router.get("/admin/newsroom/status")
 async def admin_newsroom_status():
     latest_run = None
-    doc = await db.hot_now_cards.find_one(
-        {}, {"_id": 0}, sort=[("published_at", -1)]
-    )
+    doc = await db.hot_now_cards.find_one({}, {"_id": 0}, sort=[("published_at", -1)])
     if doc:
         latest_run = {
             "run_stamp": doc.get("run_stamp") or doc.get("published_at"),
@@ -2921,18 +3156,27 @@ async def admin_newsroom_personas():
 @api_router.get("/admin/newsroom/runs")
 async def admin_newsroom_runs(limit: int = 20):
     """List of past newsroom runs (summary only, no full trace)."""
-    cursor = db.newsroom_runs.find(
-        {},
-        {
-            "_id": 0,
-            "run_id": 1, "started_at": 1, "finished_at": 1, "total_elapsed_sec": 1,
-            "outcome": 1, "published_count": 1, "keep_n": 1,
-            "stages.signal_scout.total_raw_signals": 1,
-            "stages.signal_scout.clusters_formed": 1,
-            "stages.topic_filter.kept_count": 1,
-            "stages.topic_filter.scored_count": 1,
-        },
-    ).sort("started_at", -1).limit(limit)
+    cursor = (
+        db.newsroom_runs.find(
+            {},
+            {
+                "_id": 0,
+                "run_id": 1,
+                "started_at": 1,
+                "finished_at": 1,
+                "total_elapsed_sec": 1,
+                "outcome": 1,
+                "published_count": 1,
+                "keep_n": 1,
+                "stages.signal_scout.total_raw_signals": 1,
+                "stages.signal_scout.clusters_formed": 1,
+                "stages.topic_filter.kept_count": 1,
+                "stages.topic_filter.scored_count": 1,
+            },
+        )
+        .sort("started_at", -1)
+        .limit(limit)
+    )
     runs = await cursor.to_list(limit)
     for r in runs:
         stages = r.get("stages", {}) or {}
@@ -2974,6 +3218,7 @@ async def hot_backstory_stream(req: BackStoryReq):
     with what/who/why/when + a follow-up prompt suggestion. Uses the existing
     LLM chat under the hood so it feels fast."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+
     system = (
         "You write short, plain-English BACK STORY explainers for insight cards on a mobile app. "
         "Your reader is a curious 20-30 year old Indian who wants to understand the FULL story behind a short insight card. "
@@ -3008,7 +3253,7 @@ async def hot_backstory_stream(req: BackStoryReq):
             # Stream in chunks so the modal renders progressively
             chunk_size = 40
             for i in range(0, len(resp), chunk_size):
-                yield _sse({"phase": "chunk", "text": resp[i:i + chunk_size]})
+                yield _sse({"phase": "chunk", "text": resp[i : i + chunk_size]})
                 await asyncio.sleep(0.02)
             yield _sse({"phase": "done"})
         except Exception as e:
@@ -3029,6 +3274,7 @@ class BackStoryChatReq(BaseModel):
 async def hot_backstory_chat_stream(req: BackStoryChatReq):
     """User follow-up chat within the Back Story sheet."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+
     system = (
         "You are a smart friend explaining an insight card to a curious 20-30 year old Indian in plain English. "
         "You have full context on the card + the back story that was just explained. Answer their follow-up in "
@@ -3052,7 +3298,7 @@ async def hot_backstory_chat_stream(req: BackStoryChatReq):
             resp = await chat.send_message(UserMessage(text=user_msg))
             chunk_size = 40
             for i in range(0, len(resp), chunk_size):
-                yield _sse({"phase": "chunk", "text": resp[i:i + chunk_size]})
+                yield _sse({"phase": "chunk", "text": resp[i : i + chunk_size]})
                 await asyncio.sleep(0.02)
             yield _sse({"phase": "done"})
         except Exception as e:
@@ -3075,6 +3321,7 @@ async def hot_regenerate_single(req: RegenSingleReq):
     """Regenerate a single Hot Now card on the same topic. Optional `steer`
     (voice or typed) reshapes the angle. Fast — single LLM call, no Tavily."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
+
     system = (
         "You are the DruvInsight card writer. Given an existing Hot Now insight "
         "card and (optionally) a user voice/text steer, produce a NEW single "
@@ -3104,7 +3351,7 @@ async def hot_regenerate_single(req: RegenSingleReq):
         if s.lower().startswith("json"):
             s = s[4:].strip()
         if "{" in s:
-            s = s[s.find("{"): s.rfind("}") + 1]
+            s = s[s.find("{") : s.rfind("}") + 1]
         data = json.loads(s)
         new_card = {
             "id": str(uuid.uuid4()),
@@ -3135,17 +3382,20 @@ async def hot_topic_full_sequence(topic_id: str):
     # Shape each card into the standard Insight response the feed already uses
     insights = []
     for c in cards:
-        insights.append({
-            "id": str(uuid.uuid4()),
-            "topic": doc["topic"],
-            "headline": c.get("headline", ""),
-            "text": c.get("text", ""),
-            "source_url": c.get("source_url") or (doc.get("sources") or [None])[0],
-            "source_title": c.get("source_title") or doc.get("angle", {}).get("title", ""),
-            "rail": doc.get("persona_label"),
-            "interest": doc.get("persona_label"),
-            "created_at": doc.get("published_at", ""),
-        })
+        insights.append(
+            {
+                "id": str(uuid.uuid4()),
+                "topic": doc["topic"],
+                "headline": c.get("headline", ""),
+                "text": c.get("text", ""),
+                "source_url": c.get("source_url") or (doc.get("sources") or [None])[0],
+                "source_title": c.get("source_title")
+                or doc.get("angle", {}).get("title", ""),
+                "rail": doc.get("persona_label"),
+                "interest": doc.get("persona_label"),
+                "created_at": doc.get("published_at", ""),
+            }
+        )
     return {
         "session_id": f"hot-{topic_id}",
         "topic": doc["topic"],
@@ -3167,13 +3417,17 @@ async def _newsroom_daily_loop():
     while True:
         try:
             fresh_exists = await db.hot_now_cards.find_one(
-                {"published_at": {"$gte": (datetime.now(timezone.utc).timestamp() - 20 * 3600).__str__()}},
+                {
+                    "published_at": {
+                        "$gte": (
+                            datetime.now(timezone.utc).timestamp() - 20 * 3600
+                        ).__str__()
+                    }
+                },
             )
             # Simpler check: any doc within the last 20h
             cutoff_iso = datetime.now(timezone.utc).isoformat()
-            recent = await db.hot_now_cards.find_one(
-                {}, sort=[("published_at", -1)]
-            )
+            recent = await db.hot_now_cards.find_one({}, sort=[("published_at", -1)])
             needs_run = True
             if recent:
                 try:

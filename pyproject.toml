@@ -17,5 +17,5 @@ dependencies = [
 litellm = { url = "https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl" }
 
 [[tool.uv.index]]
+name = "emergent"
 url = "https://d33sy5i8bnduwe.cloudfront.net/simple/"
-

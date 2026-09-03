@@ -10,29 +10,31 @@ Pipeline:
         → Angle Critic (loops up to 3x) → Deep Researcher
         → Card Writer → Chief Editor (loops up to 2x) → cache in Mongo
 """
+
 from __future__ import annotations
 
-import os
-import json
-import uuid
-import time
 import asyncio
+import json
 import logging
+import os
 import re
+import time
+import uuid
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
-from tavily import TavilyClient
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from tavily import TavilyClient
 
-from research import deep_research, generate_insights_from_bundle, ResearchBundle
+from research import (ResearchBundle, deep_research,
+                      generate_insights_from_bundle)
 
 log = logging.getLogger("newsroom")
 
 LLM_PROVIDER = "openai"
-LLM_MODEL = "gpt-5.4"
-LLM_MODEL_FAST = "gpt-5.4-mini"
+LLM_MODEL = "gpt-5.6-luna"
+LLM_MODEL_FAST = "gpt-5.6-luna"
 
 
 # ============================================================================
@@ -52,11 +54,17 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
             "which vacation is a paid brand trip vs an actual holiday, whose PR team just switched agencies."
         ),
         "reads": [
-            "Deuxmoi + Deux U on Instagram", "Puck (Matt Belloni, Lauren Sherman)", "Vogue Business",
-            "Business of Fashion — Imran Amed & Lauren Indvik", "Puck's What I'm Hearing podcast",
-            "Page Six + The Cut", "Chris Rojek on celebrity sociology (undergrad reading)",
-            "Emily Sundberg's Feed Me newsletter", "Rachel Karten's Link in Bio",
-            "Popbitch (UK gossip with receipts)", "r/Fauxmoi + r/deuxmoi",
+            "Deuxmoi + Deux U on Instagram",
+            "Puck (Matt Belloni, Lauren Sherman)",
+            "Vogue Business",
+            "Business of Fashion — Imran Amed & Lauren Indvik",
+            "Puck's What I'm Hearing podcast",
+            "Page Six + The Cut",
+            "Chris Rojek on celebrity sociology (undergrad reading)",
+            "Emily Sundberg's Feed Me newsletter",
+            "Rachel Karten's Link in Bio",
+            "Popbitch (UK gossip with receipts)",
+            "r/Fauxmoi + r/deuxmoi",
         ],
         "work_incentives": (
             "Rewarded for spotting cultural moments 3 weeks before they hit mainstream. Her manager "
@@ -91,7 +99,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Punchy, insider-y, slightly conspiratorial. Uses first names. Drops real numbers casually.",
         "search_hint": "Deuxmoi, Puck, Vogue Business, Page Six, Business of Fashion, Emily Sundberg, Feed Me, r/Fauxmoi",
     },
-
     "startup_founder": {
         "label": "Startup Founder",
         "reader": (
@@ -145,7 +152,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Blunt, first-principles, framework-forward. Every claim has a mechanism. No cheerleading.",
         "search_hint": "Stratechery, The Information, Byrne Hobart, Acquired, Business Breakdowns, YC library, S-1, Not Boring, Lenny's Newsletter",
     },
-
     "seed_investor": {
         "label": "Seed Investor",
         "reader": (
@@ -199,7 +205,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Analytical, calm, quantitative. Talks in cohorts, second-derivatives, and 5-year windows.",
         "search_hint": "AVC, USV, Sequoia, Not Boring, The Diff, The Generalist, PitchBook, Crunchbase, SaaStr, Blume, Chiratae",
     },
-
     "policy_wonk": {
         "label": "Policy Wonk",
         "reader": (
@@ -252,7 +257,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Historian's memory, economist's math. Every claim tied to a precedent, a mechanism, or a number.",
         "search_hint": "Foreign Affairs, Adam Tooze, Noah Smith, Odd Lots, Brookings, Carnegie, RUSI, FT, The Economist, IMF, World Bank, RBI, FOMC",
     },
-
     "developer": {
         "label": "Senior Developer",
         "reader": (
@@ -305,7 +309,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Precise, technical, dry. Cites papers and benchmarks. Skeptical of marketing framing.",
         "search_hint": "Hacker News, arxiv, The Pragmatic Engineer, Latent Space, Simon Willison, Dan Luu, engineering blogs, The Morning Paper",
     },
-
     "contrarian_economist": {
         "label": "Contrarian Economist",
         "reader": (
@@ -357,7 +360,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Dry, funny, quantitative. Style: Matt Levine. Footnote-driven skepticism.",
         "search_hint": "Money Stuff, FT Alphaville, Bloomberg Opinion, Odd Lots, Ackman letters, Hindenburg, Muddy Waters, 10-K filings, GMO, Net Interest",
     },
-
     "culture_analyst": {
         "label": "Culture Analyst",
         "reader": (
@@ -409,7 +411,6 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
         "voice": "Anthropologist meets strategist. Names the trend, quantifies it, predicts its trajectory.",
         "search_hint": "NYT Styles, Business of Fashion, Rest of World, Feed Me, Piper Sandler, WGSN, Ana Andjelic, Filterworld, RoW",
     },
-
     "india_insider": {
         "label": "India Insider",
         "reader": (
@@ -468,7 +469,9 @@ PERSONAS: Dict[str, Dict[str, Any]] = {
 # ============================================================================
 # LLM helpers
 # ============================================================================
-async def _llm_call_raw(system: str, user: str, *, model: str = LLM_MODEL, session_prefix: str = "nr") -> Tuple[str, float]:
+async def _llm_call_raw(
+    system: str, user: str, *, model: str = LLM_MODEL, session_prefix: str = "nr"
+) -> Tuple[str, float]:
     """Return (raw_text, elapsed_seconds)."""
     t0 = time.time()
     chat = LlmChat(
@@ -484,16 +487,20 @@ async def _llm_call_raw(system: str, user: str, *, model: str = LLM_MODEL, sessi
     return raw, time.time() - t0
 
 
-async def _llm_json(system: str, user: str, *, model: str = LLM_MODEL, session_prefix: str = "nr") -> Tuple[Optional[dict], str, float]:
+async def _llm_json(
+    system: str, user: str, *, model: str = LLM_MODEL, session_prefix: str = "nr"
+) -> Tuple[Optional[dict], str, float]:
     """Call LLM, strip fences, parse JSON. Returns (parsed_or_None, raw_text, elapsed)."""
-    raw, elapsed = await _llm_call_raw(system, user, model=model, session_prefix=session_prefix)
+    raw, elapsed = await _llm_call_raw(
+        system, user, model=model, session_prefix=session_prefix
+    )
     if not raw:
         return None, "", elapsed
     s = raw.strip().strip("`")
     if s.lower().startswith("json"):
         s = s[4:].strip()
     if "{" in s:
-        s = s[s.find("{"): s.rfind("}") + 1]
+        s = s[s.find("{") : s.rfind("}") + 1]
     try:
         return json.loads(s), raw, elapsed
     except Exception:
@@ -504,26 +511,32 @@ async def _llm_json(system: str, user: str, *, model: str = LLM_MODEL, session_p
 # ============================================================================
 # STAGE 1 — Signal Scout (multi-source aggregator)
 # ============================================================================
-async def _fetch_reddit_hot(subreddits: List[str], limit: int = 15) -> List[Dict[str, Any]]:
+async def _fetch_reddit_hot(
+    subreddits: List[str], limit: int = 15
+) -> List[Dict[str, Any]]:
     out = []
     headers = {"User-Agent": "DruvInsight-Newsroom/1.0"}
     async with httpx.AsyncClient(timeout=15, headers=headers) as c:
         for sub in subreddits:
             try:
-                r = await c.get(f"https://www.reddit.com/r/{sub}/hot.json?limit={limit}")
+                r = await c.get(
+                    f"https://www.reddit.com/r/{sub}/hot.json?limit={limit}"
+                )
                 if r.status_code != 200:
                     continue
                 for child in r.json().get("data", {}).get("children", []):
                     d = child.get("data", {})
                     if d.get("stickied"):
                         continue
-                    out.append({
-                        "source": f"reddit/r/{sub}",
-                        "title": d.get("title", "")[:220],
-                        "score": d.get("score", 0),
-                        "num_comments": d.get("num_comments", 0),
-                        "url": f"https://reddit.com{d.get('permalink', '')}",
-                    })
+                    out.append(
+                        {
+                            "source": f"reddit/r/{sub}",
+                            "title": d.get("title", "")[:220],
+                            "score": d.get("score", 0),
+                            "num_comments": d.get("num_comments", 0),
+                            "url": f"https://reddit.com{d.get('permalink', '')}",
+                        }
+                    )
             except Exception:
                 log.warning("reddit fetch failed for %s", sub)
     return out
@@ -533,18 +546,27 @@ async def _fetch_hn_top(limit: int = 30) -> List[Dict[str, Any]]:
     out = []
     async with httpx.AsyncClient(timeout=15) as c:
         try:
-            ids = (await c.get("https://hacker-news.firebaseio.com/v0/topstories.json")).json()[:limit]
+            ids = (
+                await c.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+            ).json()[:limit]
             for i in ids:
                 try:
-                    d = (await c.get(f"https://hacker-news.firebaseio.com/v0/item/{i}.json")).json()
+                    d = (
+                        await c.get(
+                            f"https://hacker-news.firebaseio.com/v0/item/{i}.json"
+                        )
+                    ).json()
                     if d and d.get("title"):
-                        out.append({
-                            "source": "hacker_news",
-                            "title": d.get("title", "")[:220],
-                            "score": d.get("score", 0),
-                            "num_comments": d.get("descendants", 0),
-                            "url": d.get("url") or f"https://news.ycombinator.com/item?id={i}",
-                        })
+                        out.append(
+                            {
+                                "source": "hacker_news",
+                                "title": d.get("title", "")[:220],
+                                "score": d.get("score", 0),
+                                "num_comments": d.get("descendants", 0),
+                                "url": d.get("url")
+                                or f"https://news.ycombinator.com/item?id={i}",
+                            }
+                        )
                 except Exception:
                     continue
         except Exception:
@@ -552,27 +574,37 @@ async def _fetch_hn_top(limit: int = 30) -> List[Dict[str, Any]]:
     return out
 
 
-async def _fetch_tavily_trending(tavily: TavilyClient, queries: List[str]) -> List[Dict[str, Any]]:
+async def _fetch_tavily_trending(
+    tavily: TavilyClient, queries: List[str]
+) -> List[Dict[str, Any]]:
     out = []
+
     def _search(q):
-        return tavily.search(query=q, search_depth="basic", max_results=8, topic="news", days=3)
+        return tavily.search(
+            query=q, search_depth="basic", max_results=8, topic="news", days=3
+        )
+
     for q in queries:
         try:
             r = await asyncio.to_thread(_search, q)
             for it in r.get("results", []):
-                out.append({
-                    "source": "tavily_news",
-                    "title": (it.get("title") or "")[:220],
-                    "score": int((it.get("score") or 0) * 100),
-                    "num_comments": 0,
-                    "url": it.get("url", ""),
-                })
+                out.append(
+                    {
+                        "source": "tavily_news",
+                        "title": (it.get("title") or "")[:220],
+                        "score": int((it.get("score") or 0) * 100),
+                        "num_comments": 0,
+                        "url": it.get("url", ""),
+                    }
+                )
         except Exception as e:
             log.warning("tavily trending failed for %s: %s", q, e)
     return out
 
 
-async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+async def signal_scout(
+    tavily: TavilyClient,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Aggregate raw signals — India-first, persona-diverse.
 
     Every persona bucket pulls both India-native subs AND its trusted lenses,
@@ -587,27 +619,68 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
     #    personalfinanceindia, IndianStockMarket, AskEconomics, csMajors).
     subreddit_groups: Dict[str, List[str]] = {
         # Culture ANALYST (not gossip) — sports depth, career shifts, "what's actually happening" explainers
-        "culture_analyst":     ["Cricket", "ipl", "IndianCricket", "OutOfTheLoop",
-                                "explainlikeimfive", "todayilearned", "dataisbeautiful"],
+        "culture_analyst": [
+            "Cricket",
+            "ipl",
+            "IndianCricket",
+            "OutOfTheLoop",
+            "explainlikeimfive",
+            "todayilearned",
+            "dataisbeautiful",
+        ],
         # Curious India — the "wait what" learning subs
-        "india_insider":       ["india", "AskIndia", "IndiaSocial", "CasualIndia",
-                                "UPSC", "JEENEETards", "csMajors", "developersIndia"],
+        "india_insider": [
+            "india",
+            "AskIndia",
+            "IndiaSocial",
+            "CasualIndia",
+            "UPSC",
+            "JEENEETards",
+            "csMajors",
+            "developersIndia",
+        ],
         # Policy DEPTH (not drama) — actual geopolitics + policy explainers
-        "policy_wonk":         ["geopolitics", "worldnews", "economics", "AskEconomics",
-                                "IndiaSpeaks"],
+        "policy_wonk": [
+            "geopolitics",
+            "worldnews",
+            "economics",
+            "AskEconomics",
+            "IndiaSpeaks",
+        ],
         # Startup + tech culture
-        "startup_founder":     ["StartUpIndia", "startups", "IndianStartups", "SaaS",
-                                "Entrepreneur", "ycombinator"],
+        "startup_founder": [
+            "StartUpIndia",
+            "startups",
+            "IndianStartups",
+            "SaaS",
+            "Entrepreneur",
+            "ycombinator",
+        ],
         # Personal finance + investing learners
-        "seed_investor":       ["personalfinanceindia", "IndianStockMarket", "IndiaInvestments",
-                                "venturecapital", "IndiaGrowthStocks"],
+        "seed_investor": [
+            "personalfinanceindia",
+            "IndianStockMarket",
+            "IndiaInvestments",
+            "venturecapital",
+            "IndiaGrowthStocks",
+        ],
         # Developer + tech deep
-        "developer":           ["programming", "MachineLearning", "artificial",
-                                "IndiaTech", "learnprogramming"],
+        "developer": [
+            "programming",
+            "MachineLearning",
+            "artificial",
+            "IndiaTech",
+            "learnprogramming",
+        ],
         # Markets + contrarian
-        "contrarian_economist": ["SecurityAnalysis", "stocks", "IndianStreetBets", "Valueinvesting"],
+        "contrarian_economist": [
+            "SecurityAnalysis",
+            "stocks",
+            "IndianStreetBets",
+            "Valueinvesting",
+        ],
         # Bollywood — but ONLY the depth-heavy subs (real biz coverage), not meme/gossip
-        "gossip_girl":         ["bollywood", "BollywoodRealism"],
+        "gossip_girl": ["bollywood", "BollywoodRealism"],
     }
 
     # ── LEARNER-first Tavily queries. Reject "viral" — prefer "explained", "why",
@@ -681,7 +754,9 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
         return persona, r
 
     reddit_tasks = [_fetch_persona_reddit(p, s) for p, s in all_subs]
-    tavily_tasks = [_fetch_persona_tavily(p, qs) for p, qs in persona_trending_queries.items()]
+    tavily_tasks = [
+        _fetch_persona_tavily(p, qs) for p, qs in persona_trending_queries.items()
+    ]
     hn_task = _fetch_hn_top(limit=15)
 
     reddit_results, tavily_results, hn_res = await asyncio.gather(
@@ -694,7 +769,9 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
     for item in hn_res:
         item["_persona_hint"] = "developer"
 
-    per_persona_counts: Dict[str, Dict[str, int]] = {p: {"reddit": 0, "tavily": 0} for p in subreddit_groups}
+    per_persona_counts: Dict[str, Dict[str, int]] = {
+        p: {"reddit": 0, "tavily": 0} for p in subreddit_groups
+    }
     per_persona_counts["developer"]["hacker_news"] = len(hn_res)
 
     all_signals: List[Dict[str, Any]] = list(hn_res)
@@ -720,8 +797,12 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
             continue
         if key not in clusters:
             clusters[key] = {
-                "title": s["title"], "sources": set(), "score": 0, "urls": [],
-                "raw_signals": [], "persona_hints": set(),
+                "title": s["title"],
+                "sources": set(),
+                "score": 0,
+                "urls": [],
+                "raw_signals": [],
+                "persona_hints": set(),
             }
         clusters[key]["sources"].add(s["source"])
         clusters[key]["score"] += s.get("score", 0)
@@ -734,17 +815,21 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
 
     ranked = []
     for c in clusters.values():
-        ranked.append({
-            "title": c["title"],
-            "signal_strength": c["score"],
-            "source_diversity": len(c["sources"]),
-            "sources": list(c["sources"]),
-            "urls": c["urls"][:3],
-            "raw_signals": c["raw_signals"][:5],
-            "persona_hints": list(c["persona_hints"]),
-        })
+        ranked.append(
+            {
+                "title": c["title"],
+                "signal_strength": c["score"],
+                "source_diversity": len(c["sources"]),
+                "sources": list(c["sources"]),
+                "urls": c["urls"][:3],
+                "raw_signals": c["raw_signals"][:5],
+                "persona_hints": list(c["persona_hints"]),
+            }
+        )
 
-    ranked.sort(key=lambda x: (x["source_diversity"], x["signal_strength"]), reverse=True)
+    ranked.sort(
+        key=lambda x: (x["source_diversity"], x["signal_strength"]), reverse=True
+    )
 
     persona_buckets: Dict[str, List[Dict[str, Any]]] = {p: [] for p in subreddit_groups}
     persona_buckets["_unhinted"] = []
@@ -794,14 +879,63 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
 
     # ── Persona-diverse subreddit sets ──
     subreddit_groups: Dict[str, List[str]] = {
-        "gossip_girl":         ["Fauxmoi", "popculturechat", "BollyBlindsNGossip", "entertainment", "celebrities"],
-        "startup_founder":     ["startups", "ycombinator", "Entrepreneur", "SaaS", "smallbusiness"],
-        "seed_investor":       ["venturecapital", "investing", "stocks", "SecurityAnalysis", "Valueinvesting"],
-        "policy_wonk":         ["geopolitics", "worldnews", "economics", "IRstudies", "neoliberal"],
-        "developer":           ["programming", "MachineLearning", "artificial", "compsci", "ExperiencedDevs"],
-        "contrarian_economist": ["wallstreetbets", "stocks", "options", "SecurityAnalysis", "Bogleheads"],
-        "culture_analyst":     ["GenZ", "Millennials", "OutOfTheLoop", "TrueOffMyChest", "malefashionadvice", "femalefashionadvice"],
-        "india_insider":       ["india", "IndianStreetBets", "unitedstatesofindia", "bollywood", "IndiaSpeaks"],
+        "gossip_girl": [
+            "Fauxmoi",
+            "popculturechat",
+            "BollyBlindsNGossip",
+            "entertainment",
+            "celebrities",
+        ],
+        "startup_founder": [
+            "startups",
+            "ycombinator",
+            "Entrepreneur",
+            "SaaS",
+            "smallbusiness",
+        ],
+        "seed_investor": [
+            "venturecapital",
+            "investing",
+            "stocks",
+            "SecurityAnalysis",
+            "Valueinvesting",
+        ],
+        "policy_wonk": [
+            "geopolitics",
+            "worldnews",
+            "economics",
+            "IRstudies",
+            "neoliberal",
+        ],
+        "developer": [
+            "programming",
+            "MachineLearning",
+            "artificial",
+            "compsci",
+            "ExperiencedDevs",
+        ],
+        "contrarian_economist": [
+            "wallstreetbets",
+            "stocks",
+            "options",
+            "SecurityAnalysis",
+            "Bogleheads",
+        ],
+        "culture_analyst": [
+            "GenZ",
+            "Millennials",
+            "OutOfTheLoop",
+            "TrueOffMyChest",
+            "malefashionadvice",
+            "femalefashionadvice",
+        ],
+        "india_insider": [
+            "india",
+            "IndianStreetBets",
+            "unitedstatesofindia",
+            "bollywood",
+            "IndiaSpeaks",
+        ],
     }
 
     # ── Persona-tuned trending queries (Tavily) ──
@@ -868,7 +1002,9 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
         return persona, r
 
     reddit_tasks = [_fetch_persona_reddit(p, s) for p, s in all_subs]
-    tavily_tasks = [_fetch_persona_tavily(p, qs) for p, qs in persona_trending_queries.items()]
+    tavily_tasks = [
+        _fetch_persona_tavily(p, qs) for p, qs in persona_trending_queries.items()
+    ]
     hn_task = _fetch_hn_top(limit=20)
 
     reddit_results, tavily_results, hn_res = await asyncio.gather(
@@ -883,7 +1019,9 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
         item["_persona_hint"] = "developer"
 
     # Per-persona counts for trace
-    per_persona_counts: Dict[str, Dict[str, int]] = {p: {"reddit": 0, "tavily": 0} for p in subreddit_groups}
+    per_persona_counts: Dict[str, Dict[str, int]] = {
+        p: {"reddit": 0, "tavily": 0} for p in subreddit_groups
+    }
     per_persona_counts["developer"]["hacker_news"] = len(hn_res)
 
     all_signals: List[Dict[str, Any]] = list(hn_res)
@@ -909,8 +1047,12 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
             continue
         if key not in clusters:
             clusters[key] = {
-                "title": s["title"], "sources": set(), "score": 0, "urls": [],
-                "raw_signals": [], "persona_hints": set(),
+                "title": s["title"],
+                "sources": set(),
+                "score": 0,
+                "urls": [],
+                "raw_signals": [],
+                "persona_hints": set(),
             }
         clusters[key]["sources"].add(s["source"])
         clusters[key]["score"] += s.get("score", 0)
@@ -923,20 +1065,24 @@ async def signal_scout(tavily: TavilyClient) -> Tuple[List[Dict[str, Any]], Dict
 
     ranked = []
     for c in clusters.values():
-        ranked.append({
-            "title": c["title"],
-            "signal_strength": c["score"],
-            "source_diversity": len(c["sources"]),
-            "sources": list(c["sources"]),
-            "urls": c["urls"][:3],
-            "raw_signals": c["raw_signals"][:5],
-            "persona_hints": list(c["persona_hints"]),
-        })
+        ranked.append(
+            {
+                "title": c["title"],
+                "signal_strength": c["score"],
+                "source_diversity": len(c["sources"]),
+                "sources": list(c["sources"]),
+                "urls": c["urls"][:3],
+                "raw_signals": c["raw_signals"][:5],
+                "persona_hints": list(c["persona_hints"]),
+            }
+        )
 
     # ── Persona-balanced ranking: cap dominance from any single persona hint ──
     # First sort within each persona bucket, then interleave round-robin so no
     # single persona takes more than its fair share of the top 40.
-    ranked.sort(key=lambda x: (x["source_diversity"], x["signal_strength"]), reverse=True)
+    ranked.sort(
+        key=lambda x: (x["source_diversity"], x["signal_strength"]), reverse=True
+    )
 
     persona_buckets: Dict[str, List[Dict[str, Any]]] = {p: [] for p in subreddit_groups}
     persona_buckets["_unhinted"] = []
@@ -1052,11 +1198,16 @@ Return one score-row per input signal, preserving idx:
 }}"""
 
 
-async def topic_filter(signals: List[Dict[str, Any]], keep_n: int = 15) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+async def topic_filter(
+    signals: List[Dict[str, Any]], keep_n: int = 15
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     t0 = time.time()
     if not signals:
         return [], {"elapsed_sec": 0, "reason": "no signals"}
-    payload = [{"idx": i, "title": s["title"], "sources": s["sources"]} for i, s in enumerate(signals[:40])]
+    payload = [
+        {"idx": i, "title": s["title"], "sources": s["sources"]}
+        for i, s in enumerate(signals[:40])
+    ]
     parsed, raw, elapsed = await _llm_json(
         TOPIC_FILTER_SYSTEM,
         TOPIC_FILTER_USER.format(signals=json.dumps(payload, ensure_ascii=False)),
@@ -1065,7 +1216,11 @@ async def topic_filter(signals: List[Dict[str, Any]], keep_n: int = 15) -> Tuple
     )
     scored_rows = (parsed or {}).get("scored", [])
     if not scored_rows:
-        return [], {"elapsed_sec": round(elapsed, 2), "reason": "filter parse failed", "raw_head": (raw or "")[:400]}
+        return [], {
+            "elapsed_sec": round(elapsed, 2),
+            "reason": "filter parse failed",
+            "raw_head": (raw or "")[:400],
+        }
 
     kept = []
     all_scored = []
@@ -1078,20 +1233,30 @@ async def topic_filter(signals: List[Dict[str, Any]], keep_n: int = 15) -> Tuple
             "title": base["title"],
             "topic": row.get("topic") or base["title"],
             "score": row.get("total", 0),
-            "breakdown": {k: row.get(k) for k in ("teaches_something_new", "curious_learner_pull", "is_shift_or_mystery", "not_saturated")},
+            "breakdown": {
+                k: row.get(k)
+                for k in (
+                    "teaches_something_new",
+                    "curious_learner_pull",
+                    "is_shift_or_mystery",
+                    "not_saturated",
+                )
+            },
             "keep": bool(row.get("keep")) and row.get("total", 0) >= 28,
             "reasoning": row.get("reasoning", ""),
             "sources": base["sources"],
         }
         all_scored.append(scored_entry)
         if scored_entry["keep"]:
-            kept.append({
-                **base,
-                "topic": scored_entry["topic"],
-                "quality_score": scored_entry["score"],
-                "score_breakdown": scored_entry["breakdown"],
-                "filter_reasoning": scored_entry["reasoning"],
-            })
+            kept.append(
+                {
+                    **base,
+                    "topic": scored_entry["topic"],
+                    "quality_score": scored_entry["score"],
+                    "score_breakdown": scored_entry["breakdown"],
+                    "filter_reasoning": scored_entry["reasoning"],
+                }
+            )
     kept.sort(key=lambda x: x["quality_score"], reverse=True)
     trace = {
         "elapsed_sec": round(time.time() - t0, 2),
@@ -1348,7 +1513,9 @@ Return STRICT JSON:
 ]}}"""
 
 
-async def _question_from_lens(topic: str, lens_key: str) -> Tuple[List[Dict[str, Any]], float]:
+async def _question_from_lens(
+    topic: str, lens_key: str
+) -> Tuple[List[Dict[str, Any]], float]:
     lens = QUESTION_LENSES[lens_key]
     parsed, raw, elapsed = await _llm_json(
         QUESTION_AGENT_SYSTEM.format(
@@ -1364,12 +1531,14 @@ async def _question_from_lens(topic: str, lens_key: str) -> Tuple[List[Dict[str,
         return [], elapsed
     out = []
     for q in parsed.get("questions", [])[:3]:
-        out.append({
-            "question": q.get("question", ""),
-            "curiosity_hook": q.get("curiosity_hook", ""),
-            "lens": lens_key,
-            "lens_label": lens["label"],
-        })
+        out.append(
+            {
+                "question": q.get("question", ""),
+                "curiosity_hook": q.get("curiosity_hook", ""),
+                "lens": lens_key,
+                "lens_label": lens["label"],
+            }
+        )
     return out, elapsed
 
 
@@ -1435,11 +1604,20 @@ Return STRICT JSON:
 }}"""
 
 
-async def rank_questions(questions: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+async def rank_questions(
+    questions: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     if not questions:
         return [], {"elapsed_sec": 0, "reason": "no questions"}
-    payload = [{"idx": i, "lens": q["lens_label"], "question": q["question"], "hook": q["curiosity_hook"]}
-               for i, q in enumerate(questions)]
+    payload = [
+        {
+            "idx": i,
+            "lens": q["lens_label"],
+            "question": q["question"],
+            "hook": q["curiosity_hook"],
+        }
+        for i, q in enumerate(questions)
+    ]
     parsed, raw, elapsed = await _llm_json(
         QUESTION_RANKER_SYSTEM,
         f"CANDIDATE QUESTIONS:\n{json.dumps(payload, ensure_ascii=False, indent=2)}",
@@ -1447,7 +1625,10 @@ async def rank_questions(questions: List[Dict[str, Any]]) -> Tuple[List[Dict[str
         session_prefix="qranker",
     )
     if not parsed:
-        return [], {"elapsed_sec": round(elapsed, 2), "reason": "ranker returned nothing"}
+        return [], {
+            "elapsed_sec": round(elapsed, 2),
+            "reason": "ranker returned nothing",
+        }
     ranked = parsed.get("ranked", [])
     top_ids = parsed.get("top_5_indices", [])[:5]
     top: List[Dict[str, Any]] = []
@@ -1506,8 +1687,15 @@ async def questions_to_angles(
     topic: str,
 ) -> Tuple[List[Dict[str, Any]], float]:
     p = PERSONAS[persona_key]
-    payload = [{"idx": i, "lens": q["lens_label"], "question": q["question"], "hook": q["curiosity_hook"]}
-               for i, q in enumerate(top_questions)]
+    payload = [
+        {
+            "idx": i,
+            "lens": q["lens_label"],
+            "question": q["question"],
+            "hook": q["curiosity_hook"],
+        }
+        for i, q in enumerate(top_questions)
+    ]
     parsed, raw, elapsed = await _llm_json(
         QUESTION_TO_ANGLE_SYSTEM.format(
             persona_reader=p["reader"],
@@ -1578,12 +1766,15 @@ Return STRICT JSON:
 ]}}"""
 
 
-async def angle_ideator(topic: str, persona_key: str, feedback: Optional[str] = None) -> Tuple[List[Dict[str, Any]], float, str]:
+async def angle_ideator(
+    topic: str, persona_key: str, feedback: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], float, str]:
     """Returns (angles, elapsed_sec, raw_response)."""
     p = PERSONAS[persona_key]
     feedback_block = (
         f"═══ PRIOR CRITIQUE (address this in the new attempts) ═══\n{feedback}\n"
-        if feedback else ""
+        if feedback
+        else ""
     )
     parsed, raw, elapsed = await _llm_json(
         IDEATOR_SYSTEM.format(
@@ -1635,7 +1826,9 @@ Return STRICT JSON:
 }}"""
 
 
-async def angle_critic(angles: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
+async def angle_critic(
+    angles: List[Dict[str, Any]],
+) -> Tuple[Optional[Dict[str, Any]], Optional[str], Dict[str, Any]]:
     if not angles:
         return None, "no angles supplied", {"elapsed_sec": 0}
     payload = [{"idx": i, **a} for i, a in enumerate(angles)]
@@ -1645,20 +1838,32 @@ async def angle_critic(angles: List[Dict[str, Any]]) -> Tuple[Optional[Dict[str,
         model=LLM_MODEL,
         session_prefix="critic",
     )
-    trace = {"elapsed_sec": round(elapsed, 2), "scores": (parsed or {}).get("scores", []), "raw_head": (raw or "")[:400]}
+    trace = {
+        "elapsed_sec": round(elapsed, 2),
+        "scores": (parsed or {}).get("scores", []),
+        "raw_head": (raw or "")[:400],
+    }
     if not parsed:
         return None, "critic returned nothing", trace
     winner_idx = parsed.get("winner_idx", -1)
     if isinstance(winner_idx, int) and 0 <= winner_idx < len(angles):
         winner = dict(angles[winner_idx])
-        scores = next((s for s in parsed.get("scores", []) if s.get("idx") == winner_idx), None)
+        scores = next(
+            (s for s in parsed.get("scores", []) if s.get("idx") == winner_idx), None
+        )
         if scores:
             winner["_critic_score"] = scores
         return winner, None, trace
-    return None, parsed.get("critique_if_all_fail") or "all angles failed the bar", trace
+    return (
+        None,
+        parsed.get("critique_if_all_fail") or "all angles failed the bar",
+        trace,
+    )
 
 
-async def pick_winning_angle(topic: str, persona_key: str, max_retries: int = 1) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
+async def pick_winning_angle(
+    topic: str, persona_key: str, max_retries: int = 1
+) -> Tuple[Optional[Dict[str, Any]], Dict[str, Any]]:
     """Question Ladder → Angle Critic. Returns (winning_angle_or_None, full_trace)."""
     ladder_trace: Dict[str, Any] = {"pipeline": "question_ladder"}
     t0 = time.time()
@@ -1671,13 +1876,20 @@ async def pick_winning_angle(topic: str, persona_key: str, max_retries: int = 1)
     }
     for q in all_qs:
         lens = q["lens"]
-        ladder_trace["step_1_question_generation"]["questions_by_lens"].setdefault(lens, []).append({
-            "question": q["question"],
-            "curiosity_hook": q["curiosity_hook"],
-        })
-    log.info("[newsroom]   ⚙ ladder: generated %d questions across %d lenses in %.1fs",
-             len(all_qs), qgen_trace["total_questions"] > 0 and len(qgen_trace["per_lens_counts"]) or 0,
-             qgen_trace["elapsed_sec"])
+        ladder_trace["step_1_question_generation"]["questions_by_lens"].setdefault(
+            lens, []
+        ).append(
+            {
+                "question": q["question"],
+                "curiosity_hook": q["curiosity_hook"],
+            }
+        )
+    log.info(
+        "[newsroom]   ⚙ ladder: generated %d questions across %d lenses in %.1fs",
+        len(all_qs),
+        qgen_trace["total_questions"] > 0 and len(qgen_trace["per_lens_counts"]) or 0,
+        qgen_trace["elapsed_sec"],
+    )
     if not all_qs:
         ladder_trace["outcome"] = "no_questions"
         return None, ladder_trace
@@ -1692,7 +1904,8 @@ async def pick_winning_angle(topic: str, persona_key: str, max_retries: int = 1)
                 "question": q["question"],
                 "score": q.get("_rank_score", {}).get("total"),
                 "curiosity_hook": q["curiosity_hook"],
-            } for q in top_qs
+            }
+            for q in top_qs
         ],
     }
     log.info("[newsroom]   ⚙ ladder: ranked → top 5 questions selected")
@@ -1706,7 +1919,9 @@ async def pick_winning_angle(topic: str, persona_key: str, max_retries: int = 1)
         "elapsed_sec": round(angle_elapsed, 2),
         "angles": angles,
     }
-    log.info("[newsroom]   ⚙ ladder: transformed %d angles from top questions", len(angles))
+    log.info(
+        "[newsroom]   ⚙ ladder: transformed %d angles from top questions", len(angles)
+    )
     if not angles:
         ladder_trace["outcome"] = "no_angles_from_questions"
         return None, ladder_trace
@@ -1728,7 +1943,9 @@ async def pick_winning_angle(topic: str, persona_key: str, max_retries: int = 1)
 
     # ── Fallback: One more attempt with the old single-pass Ideator ──
     log.info("[newsroom]   ⚙ ladder critic REJECTED — fallback to single-pass ideator")
-    angles_fb, fb_elapsed, _ = await angle_ideator(topic, persona_key, feedback=critique)
+    angles_fb, fb_elapsed, _ = await angle_ideator(
+        topic, persona_key, feedback=critique
+    )
     ladder_trace["step_5_fallback_ideator"] = {
         "elapsed_sec": round(fb_elapsed, 2),
         "candidates": angles_fb,
@@ -1862,7 +2079,11 @@ async def write_cards(
     p = PERSONAS[persona_key]
     research_query = f"{topic} — {angle.get('title', '')} — {angle.get('thesis', '')}"
 
-    research_trace = {"query": research_query, "attempts": [], "used_cached_bundle": bool(cached_bundle)}
+    research_trace = {
+        "query": research_query,
+        "attempts": [],
+        "used_cached_bundle": bool(cached_bundle),
+    }
     bundle: Optional[ResearchBundle] = cached_bundle
     if bundle is None or not bundle.sources:
         for is_news, days, extract_n, yt_n in [(True, 7, 5, 2), (False, 30, 4, 1)]:
@@ -1880,25 +2101,31 @@ async def write_cards(
             except Exception:
                 log.exception("[newsroom] write_cards: deep_research raised")
                 bundle = ResearchBundle(topic=research_query)
-            research_trace["attempts"].append({
-                "is_news": is_news,
-                "news_days": days,
-                "sources": len(bundle.sources) if bundle else 0,
-                "angles": len(bundle.angles) if bundle else 0,
-                "youtube": len(getattr(bundle, "youtube", []) or []),
-                "elapsed_sec": round(time.time() - att_t0, 2),
-            })
+            research_trace["attempts"].append(
+                {
+                    "is_news": is_news,
+                    "news_days": days,
+                    "sources": len(bundle.sources) if bundle else 0,
+                    "angles": len(bundle.angles) if bundle else 0,
+                    "youtube": len(getattr(bundle, "youtube", []) or []),
+                    "elapsed_sec": round(time.time() - att_t0, 2),
+                }
+            )
             if bundle and bundle.sources:
                 break
             await asyncio.sleep(0.5)
 
     if not bundle or not bundle.sources:
         research_trace["final_sources"] = 0
-        return [], bundle or ResearchBundle(topic=research_query), {
-            "research": research_trace,
-            "writer": {"skipped": True, "reason": "no research sources"},
-            "elapsed_sec": round(time.time() - t0, 2),
-        }
+        return (
+            [],
+            bundle or ResearchBundle(topic=research_query),
+            {
+                "research": research_trace,
+                "writer": {"skipped": True, "reason": "no research sources"},
+                "elapsed_sec": round(time.time() - t0, 2),
+            },
+        )
 
     research_trace["final_sources"] = len(bundle.sources)
     research_trace["source_urls"] = [s.get("url") for s in bundle.sources[:15]]
@@ -1942,11 +2169,15 @@ async def write_cards(
         "cards_produced": len(items),
         "elapsed_sec": round(time.time() - writer_t0, 2),
     }
-    return items, bundle, {
-        "research": research_trace,
-        "writer": writer_trace,
-        "elapsed_sec": round(time.time() - t0, 2),
-    }
+    return (
+        items,
+        bundle,
+        {
+            "research": research_trace,
+            "writer": writer_trace,
+            "elapsed_sec": round(time.time() - t0, 2),
+        },
+    )
 
 
 # ============================================================================
@@ -1992,8 +2223,13 @@ Return STRICT JSON:
 }}"""
 
 
-async def readability_engagement_critic(cards: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], float]:
-    payload = [{"idx": i, "headline": c.get("headline", ""), "text": c.get("text", "")} for i, c in enumerate(cards)]
+async def readability_engagement_critic(
+    cards: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], float]:
+    payload = [
+        {"idx": i, "headline": c.get("headline", ""), "text": c.get("text", "")}
+        for i, c in enumerate(cards)
+    ]
     parsed, raw, elapsed = await _llm_json(
         READABILITY_CRITIC_SYSTEM,
         f"CARD SEQUENCE:\n{json.dumps(payload, ensure_ascii=False, indent=2)}",
@@ -2001,7 +2237,14 @@ async def readability_engagement_critic(cards: List[Dict[str, Any]]) -> Tuple[Di
         session_prefix="readcritic",
     )
     if not parsed:
-        return {"verdict": "REJECT", "problem_indices": [], "avg_engagement": 0, "wow_count": 0, "per_card": [], "rewrite_hint": "critic returned nothing"}, elapsed
+        return {
+            "verdict": "REJECT",
+            "problem_indices": [],
+            "avg_engagement": 0,
+            "wow_count": 0,
+            "per_card": [],
+            "rewrite_hint": "critic returned nothing",
+        }, elapsed
     return parsed, elapsed
 
 
@@ -2035,7 +2278,10 @@ Return STRICT JSON:
 
 
 async def chief_editor(cards: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], float]:
-    payload = [{"idx": i, "headline": c.get("headline", ""), "text": c.get("text", "")} for i, c in enumerate(cards)]
+    payload = [
+        {"idx": i, "headline": c.get("headline", ""), "text": c.get("text", "")}
+        for i, c in enumerate(cards)
+    ]
     parsed, raw, elapsed = await _llm_json(
         CHIEF_SYSTEM,
         f"CARD SEQUENCE:\n{json.dumps(payload, ensure_ascii=False, indent=2)}",
@@ -2043,7 +2289,14 @@ async def chief_editor(cards: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], flo
         session_prefix="chief",
     )
     if not parsed:
-        return {"verdict": "REJECT", "problem_indices": [], "notes": "chief returned nothing", "aha_count": 0, "opens_curiosity_at_end": False, "chained": False}, elapsed
+        return {
+            "verdict": "REJECT",
+            "problem_indices": [],
+            "notes": "chief returned nothing",
+            "aha_count": 0,
+            "opens_curiosity_at_end": False,
+            "chained": False,
+        }, elapsed
     return parsed, elapsed
 
 
@@ -2059,13 +2312,27 @@ async def process_one_topic(
     topic_t0 = time.time()
     trace: Dict[str, Any] = {
         "topic": topic,
-        "signal": {k: signal.get(k) for k in ("title", "quality_score", "score_breakdown", "sources", "filter_reasoning")},
+        "signal": {
+            k: signal.get(k)
+            for k in (
+                "title",
+                "quality_score",
+                "score_breakdown",
+                "sources",
+                "filter_reasoning",
+            )
+        },
         "stages": {},
     }
     log.info("[newsroom] processing topic: %s", topic)
 
     persona_key, why, router_elapsed = await persona_router(topic)
-    trace["stages"]["router"] = {"persona_key": persona_key, "persona_label": PERSONAS[persona_key]["label"], "why": why, "elapsed_sec": round(router_elapsed, 2)}
+    trace["stages"]["router"] = {
+        "persona_key": persona_key,
+        "persona_label": PERSONAS[persona_key]["label"],
+        "why": why,
+        "elapsed_sec": round(router_elapsed, 2),
+    }
     log.info("[newsroom]   → persona: %s (%s)", persona_key, why)
 
     winner, ideation_trace = await pick_winning_angle(topic, persona_key, max_retries=2)
@@ -2077,7 +2344,9 @@ async def process_one_topic(
         return None, trace
     log.info("[newsroom]   → angle: [%s] %s", winner.get("kind"), winner.get("title"))
 
-    cards, bundle, writer_trace = await write_cards(topic, winner, persona_key, tavily, llm_key)
+    cards, bundle, writer_trace = await write_cards(
+        topic, winner, persona_key, tavily, llm_key
+    )
     trace["stages"]["writer"] = writer_trace
     if not cards:
         trace["outcome"] = "dropped_at_writer"
@@ -2087,36 +2356,78 @@ async def process_one_topic(
 
     # ── Stage 6.5: Readability + Engagement Critic (one revision loop) ──
     read_v, read_elapsed = await readability_engagement_critic(cards)
-    trace["stages"]["readability_v1"] = {**read_v, "elapsed_sec": round(read_elapsed, 2)}
-    log.info("[newsroom]   ⌛ readability v1: verdict=%s avg_eng=%.1f wow=%d problems=%s",
-             read_v.get("verdict"), float(read_v.get("avg_engagement") or 0),
-             int(read_v.get("wow_count") or 0), read_v.get("problem_indices"))
+    trace["stages"]["readability_v1"] = {
+        **read_v,
+        "elapsed_sec": round(read_elapsed, 2),
+    }
+    log.info(
+        "[newsroom]   ⌛ readability v1: verdict=%s avg_eng=%.1f wow=%d problems=%s",
+        read_v.get("verdict"),
+        float(read_v.get("avg_engagement") or 0),
+        int(read_v.get("wow_count") or 0),
+        read_v.get("problem_indices"),
+    )
     if read_v.get("verdict") != "PASS":
-        log.info("[newsroom]   ↺ readability REJECTED — revision with hint: %s", read_v.get("rewrite_hint", ""))
-        hint = read_v.get("rewrite_hint") or "Rewrite the flagged cards in plainer English with clearer topic anchors."
-        cards2, bundle2, writer_trace2 = await write_cards(topic, winner, persona_key, tavily, llm_key, writer_hint=hint, cached_bundle=bundle)
+        log.info(
+            "[newsroom]   ↺ readability REJECTED — revision with hint: %s",
+            read_v.get("rewrite_hint", ""),
+        )
+        hint = (
+            read_v.get("rewrite_hint")
+            or "Rewrite the flagged cards in plainer English with clearer topic anchors."
+        )
+        cards2, bundle2, writer_trace2 = await write_cards(
+            topic,
+            winner,
+            persona_key,
+            tavily,
+            llm_key,
+            writer_hint=hint,
+            cached_bundle=bundle,
+        )
         trace["stages"]["writer_revision"] = writer_trace2
         if cards2:
             cards, bundle = cards2, bundle2
             read_v2, read_elapsed2 = await readability_engagement_critic(cards)
-            trace["stages"]["readability_v2"] = {**read_v2, "elapsed_sec": round(read_elapsed2, 2)}
-            log.info("[newsroom]   ⌛ readability v2: verdict=%s", read_v2.get("verdict"))
+            trace["stages"]["readability_v2"] = {
+                **read_v2,
+                "elapsed_sec": round(read_elapsed2, 2),
+            }
+            log.info(
+                "[newsroom]   ⌛ readability v2: verdict=%s", read_v2.get("verdict")
+            )
             if read_v2.get("verdict") != "PASS":
                 trace["outcome"] = "dropped_at_readability_critic"
                 trace["total_elapsed_sec"] = round(time.time() - topic_t0, 2)
-                log.info("[newsroom]   ✗ readability REJECTED on revision — dropping topic")
+                log.info(
+                    "[newsroom]   ✗ readability REJECTED on revision — dropping topic"
+                )
                 return None, trace
 
     verdict, chief_elapsed = await chief_editor(cards)
     trace["stages"]["chief_v1"] = {**verdict, "elapsed_sec": round(chief_elapsed, 2)}
     if verdict.get("verdict") != "PASS":
         log.info("[newsroom]   ↺ chief REJECTED — revision")
-        chief_hint = verdict.get("notes") or "Rewrite flagged cards with catchier headlines and plainer English."
-        cards, bundle, writer_trace3 = await write_cards(topic, winner, persona_key, tavily, llm_key, writer_hint=chief_hint, cached_bundle=bundle)
+        chief_hint = (
+            verdict.get("notes")
+            or "Rewrite flagged cards with catchier headlines and plainer English."
+        )
+        cards, bundle, writer_trace3 = await write_cards(
+            topic,
+            winner,
+            persona_key,
+            tavily,
+            llm_key,
+            writer_hint=chief_hint,
+            cached_bundle=bundle,
+        )
         trace["stages"]["writer_revision2"] = writer_trace3
         if cards:
             verdict, chief_elapsed2 = await chief_editor(cards)
-            trace["stages"]["chief_v2"] = {**verdict, "elapsed_sec": round(chief_elapsed2, 2)}
+            trace["stages"]["chief_v2"] = {
+                **verdict,
+                "elapsed_sec": round(chief_elapsed2, 2),
+            }
         if verdict.get("verdict") != "PASS":
             trace["outcome"] = "dropped_at_chief_editor"
             trace["total_elapsed_sec"] = round(time.time() - topic_t0, 2)
@@ -2135,7 +2446,10 @@ async def process_one_topic(
         "quality_scores": {
             "filter": signal.get("score_breakdown"),
             "critic": winner.get("_critic_score"),
-            "chief": {k: verdict.get(k) for k in ("aha_count", "opens_curiosity_at_end", "chained", "notes")},
+            "chief": {
+                k: verdict.get(k)
+                for k in ("aha_count", "opens_curiosity_at_end", "chained", "notes")
+            },
         },
         "published_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -2149,7 +2463,9 @@ async def process_one_topic(
 # ============================================================================
 # Daily run — persists to db.newsroom_runs (trace) + db.hot_now_cards (output)
 # ============================================================================
-async def run_newsroom(tavily: TavilyClient, db, llm_key: str, keep_n: int = 15) -> Dict[str, Any]:
+async def run_newsroom(
+    tavily: TavilyClient, db, llm_key: str, keep_n: int = 15
+) -> Dict[str, Any]:
     run_id = str(uuid.uuid4())
     run_started_at = datetime.now(timezone.utc).isoformat()
     run_t0 = time.time()
@@ -2199,7 +2515,9 @@ async def run_newsroom(tavily: TavilyClient, db, llm_key: str, keep_n: int = 15)
                 log.exception("[newsroom] topic pipeline failed: %s", sig.get("topic"))
                 return None, {"topic": sig.get("topic"), "outcome": "exception"}
 
-    results = await asyncio.gather(*[_bounded(s) for s in kept], return_exceptions=False)
+    results = await asyncio.gather(
+        *[_bounded(s) for s in kept], return_exceptions=False
+    )
 
     published: List[Dict[str, Any]] = []
     for pub, tr in results:
@@ -2220,8 +2538,12 @@ async def run_newsroom(tavily: TavilyClient, db, llm_key: str, keep_n: int = 15)
     run_doc["outcome"] = "success" if published else "all_topics_dropped"
     await db.newsroom_runs.insert_one(run_doc)
 
-    log.info("[newsroom] === run %s done: %d published in %.1fs ===",
-             run_id, len(published), run_doc["total_elapsed_sec"])
+    log.info(
+        "[newsroom] === run %s done: %d published in %.1fs ===",
+        run_id,
+        len(published),
+        run_doc["total_elapsed_sec"],
+    )
 
     return {
         "ok": True,
@@ -2231,7 +2553,11 @@ async def run_newsroom(tavily: TavilyClient, db, llm_key: str, keep_n: int = 15)
         "published": len(published),
         "elapsed_sec": run_doc["total_elapsed_sec"],
         "topics": [
-            {"topic": r["topic"], "persona": r["persona_label"], "angle": r["angle"]["title"]}
+            {
+                "topic": r["topic"],
+                "persona": r["persona_label"],
+                "angle": r["angle"]["title"],
+            }
             for r in published
         ],
     }

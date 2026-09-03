@@ -23,12 +23,9 @@ from typing import List, Optional
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable,
-)
-
+from youtube_transcript_api._errors import (NoTranscriptFound,
+                                            TranscriptsDisabled,
+                                            VideoUnavailable)
 
 log = logging.getLogger(__name__)
 
@@ -150,7 +147,9 @@ class ResearchBundle:
     angles: List[dict] = field(default_factory=list)
     sources: List[dict] = field(default_factory=list)  # unique, top-N
     extracts: List[dict] = field(default_factory=list)  # {url, title, content}
-    youtube: List[dict] = field(default_factory=list)  # {url, title, transcript_excerpt}
+    youtube: List[dict] = field(
+        default_factory=list
+    )  # {url, title, transcript_excerpt}
     tavily_answer: str = ""
     quota_exceeded: bool = False  # True if Tavily returned a plan/quota error
 
@@ -165,8 +164,10 @@ def _extract_json(raw: str) -> dict:
 
 
 async def plan_research_angles(
-    topic: str, llm_key: str, model_provider: str = "openai",
-    model_name: str = "gpt-5.4-mini",
+    topic: str,
+    llm_key: str,
+    model_provider: str = "openai",
+    model_name: str = "gpt-5.6-luna",
     persona: Optional[str] = None,
     angle_hint: Optional[str] = None,
     is_news: bool = False,
@@ -438,14 +439,12 @@ PERSONA_LIBRARY: dict = {
 }
 
 
-
-
 async def plan_rails(
     interests: List[str],
     is_news: bool,
     llm_key: str,
     model_provider: str = "openai",
-    model_name: str = "gpt-5.4-mini",
+    model_name: str = "gpt-5.6-luna",
 ) -> List[dict]:
     """Build ONE rail PER interest — NEVER cluster / mix interests.
 
@@ -522,7 +521,11 @@ async def plan_rails(
                 "angle_hint": (r.get("angle_hint") or "").strip(),
             }
         except Exception:
-            log.exception("Rail planning JSON parse failed for '%s': %s", interest, text[:400] if text else "<empty>")
+            log.exception(
+                "Rail planning JSON parse failed for '%s': %s",
+                interest,
+                text[:400] if text else "<empty>",
+            )
             # Last-resort persona so this interest still gets its own rail
             return {
                 "name": interest,
@@ -573,7 +576,8 @@ async def _tavily_search_one(
                 # Terminal plan / quota errors — no point retrying
                 if (
                     "usage limit" in msg
-                    or "plan" in msg and "limit" in msg
+                    or "plan" in msg
+                    and "limit" in msg
                     or "forbidden" in msg
                     or "401" in msg
                     or "403" in msg
@@ -586,12 +590,19 @@ async def _tavily_search_one(
                     or "connection reset" in msg
                     or "read timed out" in msg
                     or "temporarily unavailable" in msg
-                    or "502" in msg or "503" in msg or "504" in msg
+                    or "502" in msg
+                    or "503" in msg
+                    or "504" in msg
                 )
                 if not transient or attempt == 2:
-                    log.warning("Tavily search failed for '%s' (attempt %d): %s", query, attempt + 1, e)
+                    log.warning(
+                        "Tavily search failed for '%s' (attempt %d): %s",
+                        query,
+                        attempt + 1,
+                        e,
+                    )
                     return {"results": []}
-                _time.sleep(0.6 * (2 ** attempt))  # 0.6s, 1.2s
+                _time.sleep(0.6 * (2**attempt))  # 0.6s, 1.2s
         log.warning("Tavily search exhausted retries for '%s': %s", query, last_err)
         return {"results": []}
 
@@ -627,7 +638,9 @@ def _extract_youtube_id(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 
-async def _fetch_youtube_transcript(video_id: str, title: str, url: str) -> Optional[dict]:
+async def _fetch_youtube_transcript(
+    video_id: str, title: str, url: str
+) -> Optional[dict]:
     """Fetch a YouTube transcript (best-effort). Returns a dict or None."""
 
     def _do():
@@ -673,10 +686,13 @@ async def deep_research(
     on_progress: optional async callable taking a dict {phase, message, meta?}
     called at each stage boundary. Useful for driving SSE progress events.
     """
+
     async def emit(phase: str, message: str, meta: Optional[dict] = None):
         if on_progress:
             try:
-                await on_progress({"phase": phase, "message": message, "meta": meta or {}})
+                await on_progress(
+                    {"phase": phase, "message": message, "meta": meta or {}}
+                )
             except Exception:
                 log.debug("progress callback error", exc_info=True)
 
@@ -717,7 +733,11 @@ async def deep_research(
             days = news_days if topic_type == "news" else None
         search_tasks.append(
             _tavily_search_one(
-                tavily_client, q, topic_type=topic_type, max_results=6, days=days,
+                tavily_client,
+                q,
+                topic_type=topic_type,
+                max_results=6,
+                days=days,
             )
         )
     search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
@@ -754,9 +774,7 @@ async def deep_research(
 
     # 4) Deep-extract top URLs (skip YouTube — handled by transcript pass)
     top_urls_to_extract = [
-        s["url"]
-        for s in bundle.sources
-        if _extract_youtube_id(s["url"]) is None
+        s["url"] for s in bundle.sources if _extract_youtube_id(s["url"]) is None
     ][:extract_top_n]
 
     if top_urls_to_extract:
@@ -769,7 +787,9 @@ async def deep_research(
 
     extracts_res, *yt_res = await asyncio.gather(extract_task, *yt_tasks)
 
-    extract_map = {r["url"]: r.get("raw_content") or "" for r in extracts_res if r.get("url")}
+    extract_map = {
+        r["url"]: r.get("raw_content") or "" for r in extracts_res if r.get("url")
+    }
     bundle.extracts = [
         {"url": u, "content": (extract_map.get(u, "") or "")[:6000]}
         for u in top_urls_to_extract
@@ -808,10 +828,14 @@ def build_research_context(bundle: ResearchBundle) -> str:
         url = s.get("url", "")
         content = (s.get("content") or "")[:900]
         angle = s.get("_angle", "")
-        parts.append(f"[{i}] {title}   ({angle})\n   URL: {url}\n   SNIPPET: {content}\n")
+        parts.append(
+            f"[{i}] {title}   ({angle})\n   URL: {url}\n   SNIPPET: {content}\n"
+        )
 
     if bundle.extracts:
-        parts.append("\nDEEP-EXTRACTED SOURCE CONTENT (fuller context from top sources):")
+        parts.append(
+            "\nDEEP-EXTRACTED SOURCE CONTENT (fuller context from top sources):"
+        )
         for e in bundle.extracts:
             parts.append(f"URL: {e['url']}\n---\n{e['content']}\n---")
 

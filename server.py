@@ -53,7 +53,7 @@ stt_client = OpenAISpeechToText(api_key=EMERGENT_LLM_KEY)
 # ============ LLM model — OpenAI GPT-5.4 across the app ============
 # Users don't pick — the product is opinionated. Latest & best chat model.
 LLM_PROVIDER = "openai"
-LLM_MODEL = "gpt-5.4"
+LLM_MODEL = "gpt-5.6-luna"
 
 
 # ============ Models ============
@@ -241,26 +241,6 @@ def is_vague(topic: str) -> bool:
     if len(t.split()) < 2 and t in VAGUE_TOPICS:
         return True
     return False
-
-
-async def tavily_search(topic: str) -> tuple:
-    """[Legacy] Kept for regenerate. Simple advanced search returning (results, answer)."""
-
-    def _search():
-        return tavily.search(
-            query=topic,
-            search_depth="advanced",
-            max_results=8,
-            include_answer=True,
-            include_raw_content=False,
-        )
-
-    try:
-        result = await asyncio.to_thread(_search)
-        return result.get("results", []), result.get("answer", "")
-    except Exception:
-        logging.exception("Tavily search failed")
-        return [], ""
 
 
 def legacy_context(results: List[dict], answer: str) -> str:
@@ -1021,7 +1001,7 @@ async def _stream_generate(
                                 api_key=EMERGENT_LLM_KEY,
                                 session_id="probe",
                                 system_message="Reply with 'ok'",
-                            ).with_model("openai", "gpt-5.4-mini")
+                            ).with_model("openai", "gpt-5.6-luna")
                             await _c.send_message(_UM(text="ping"))
                         except Exception as e:
                             if (
@@ -2095,7 +2075,7 @@ SEED_INTERESTS = [
 
 # Cheap + fast LLM for chip expansion (independent of the main insight LLM)
 INTEREST_LLM_PROVIDER = "openai"
-INTEREST_LLM_MODEL = "gpt-5.4-nano"
+INTEREST_LLM_MODEL = "gpt-5.6-luna"
 
 
 class InterestExpandRequest(BaseModel):
@@ -3244,7 +3224,7 @@ async def hot_backstory_stream(req: BackStoryReq):
         api_key=EMERGENT_LLM_KEY,
         session_id=f"backstory-{uuid.uuid4()}",
         system_message=system,
-    ).with_model("openai", "gpt-5.4-mini")
+    ).with_model("openai", "gpt-5.6-luna")
 
     async def gen():
         yield _sse({"phase": "start"})
@@ -3290,7 +3270,7 @@ async def hot_backstory_chat_stream(req: BackStoryChatReq):
         api_key=EMERGENT_LLM_KEY,
         session_id=f"backstory-chat-{uuid.uuid4()}",
         system_message=system,
-    ).with_model("openai", "gpt-5.4-mini")
+    ).with_model("openai", "gpt-5.6-luna")
 
     async def gen():
         yield _sse({"phase": "start"})
@@ -3344,7 +3324,7 @@ async def hot_regenerate_single(req: RegenSingleReq):
         api_key=EMERGENT_LLM_KEY,
         session_id=f"regen-single-{uuid.uuid4()}",
         system_message=system,
-    ).with_model("openai", "gpt-5.4-mini")
+    ).with_model("openai", "gpt-5.6-luna")
     try:
         raw = await chat.send_message(UserMessage(text=user_msg))
         s = raw.strip().strip("`")

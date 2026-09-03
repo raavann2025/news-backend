@@ -1,0 +1,21 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "emergentintegrations>=0.2.0",
+    "fastapi[all]>=0.141.1",
+    "litellm",
+    "motor>=3.7.1",
+    "tavily>=1.1.0",
+    "youtube-transcript-api>=1.2.4",
+]
+
+[tool.uv.sources]
+litellm = { url = "https://customer-assets.emergentagent.com/internal-asset/library/litellm-1.80.0-py3-none-any.whl" }
+
+[[tool.uv.index]]
+url = "https://d33sy5i8bnduwe.cloudfront.net/simple/"
+
